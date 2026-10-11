@@ -1,0 +1,31 @@
+# 编译产物（可重新生成）
+build/
+
+# 上传的图片（内容寻址，可重新上传）
+uploads/
+
+# 运行日志
+*.log
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 环境变量
+.env
+
+# 认证签名密钥（首次启动自动生成，绝不能提交）
+.secret_key
+backend/.secret_key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db

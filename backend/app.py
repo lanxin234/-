@@ -1,0 +1,1525 @@
+"""
+区块链二手交易平台 —— 后端服务
+
+技术：Flask + web3.py
+职责：
+  1. 启动时编译部署合约到本地链
+  2. 提供 REST API 供前端调用
+  3. 管理测试账户（每个账户代表一个用户）
+
+运行：
+  C:/Users/25191/.venvs/base/Scripts/python.exe backend/app.py
+
+然后浏览器打开 http://127.0.0.1:5000
+"""
+
+import json
+import sys
+import hashlib
+import re
+from functools import wraps
+from pathlib import Path
+from datetime import datetime
+
+from flask import Flask, jsonify, request, send_from_directory
+from web3 import Web3
+from web3.providers.eth_tester import EthereumTesterProvider
+from solcx import compile_standard, install_solc, get_installed_solc_versions
+
+import auth
+
+# ============================================================
+#  路径配置
+# ============================================================
+
+ROOT = Path(__file__).resolve().parent.parent
+CONTRACT_FILE = ROOT / "contracts" / "SecondHandMarket.sol"
+UPLOAD_DIR = ROOT / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+FRONTEND_DIR = ROOT / "frontend"
+BUILD_DIR = ROOT / "build"
+SOLC_VERSION = "0.8.19"
+
+# ============================================================
+#  中文错误映射
+# ============================================================
+
+ERROR_MAP = {
+    "Please register first": "请先注册账号",
+    "Item does not exist": "商品不存在",
+    "Already registered": "你已经注册过了",
+    "Nickname cannot be empty": "昵称不能为空",
+    "Nickname too long (max 20)": "昵称最长20个字符",
+    "Item name cannot be empty": "商品名称不能为空",
+    "Item name too long (max 50)": "商品名称最长50个字符",
+    "Price must be greater than 0": "价格必须大于0",
+    "Item is not on sale": "该商品不在售",
+    "Cannot buy your own item": "不能购买自己发布的商品",
+    "Payment amount does not match price": "付款金额与标价不符",
+    "Item is not in escrow": "该商品不在托管状态",
+    "Only the buyer can confirm receipt": "只有买家本人能确认收货",
+    "Only the seller can remove the item": "只有卖家本人能下架",
+    "Only items on sale can be removed": "只有在售商品能下架",
+    "Can only rate after the deal is completed": "交易完成后才能评价",
+    "Score must be between 1 and 5": "评分必须在1-5之间",
+    "Only the two parties can rate": "只有交易双方能评价",
+    "Can only rate the counterparty": "只能评价交易对手",
+    "Cannot rate yourself": "不能评价自己",
+    "You have already rated": "你已经评价过了",
+    "Only the platform owner can modify": "只有平台方可以修改",
+    "Platform fee cannot exceed 5%": "手续费不能超过5%",
+}
+
+
+def translate(msg: str) -> str:
+    """合约英文报错 → 中文"""
+    text = str(msg)
+    for en, zh in ERROR_MAP.items():
+        if en in text:
+            return zh
+    # 没匹配到的，截取 revert 原因
+    if "execution reverted" in text:
+        return "交易被合约拒绝"
+    return text[:200]
+
+
+def friendly_error(e: Exception) -> str:
+    """提取人类可读的错误信息"""
+    return translate(e)
+
+
+# ============================================================
+#  商品分类 + 图片哈希
+# ============================================================
+# 链上合约存的是纯文本，为了不修改合约，把附加信息编码在描述里。
+# 格式：[分类]分类名|图片哈希|实际描述
+# 读取时解析出来。这是"在不改协议的前提下扩展字段"的常见技巧。
+
+CATEGORIES = ["数码电子", "图书教材", "生活用品", "运动户外", "服饰鞋包", "其他"]
+CATEGORY_PREFIX = "[分类]"
+
+# 每个测试账户的初始余额。
+# eth-tester 默认给 100 万 ETH，读数太长不便演示；商品价格区间是
+# 0.05 ~ 3.2 ETH，100 ETH 足够买卖几十次。
+INITIAL_BALANCE_ETH = 100
+
+
+def encode_description(category: str, description: str, image_hash: str = "") -> str:
+    """把分类和图片哈希编码进描述"""
+    cat = category if category in CATEGORIES else "其他"
+    return f"{CATEGORY_PREFIX}{cat}|{image_hash}|{description}"
+
+
+def decode_description(raw: str):
+    """
+    从描述里解析出 (分类, 图片哈希, 纯描述)
+    兼容三种格式：
+      [分类]分类名|哈希|描述     ← 新版
+      [分类]分类名|描述          ← 上一版
+      描述                       ← 最早版本
+    """
+    if raw and raw.startswith(CATEGORY_PREFIX):
+        rest = raw[len(CATEGORY_PREFIX):]
+        parts = rest.split("|", 2)
+        if len(parts) == 3:
+            return parts[0], parts[1], parts[2]
+        if len(parts) == 2:
+            return parts[0], "", parts[1]
+        return rest, "", ""
+    return guess_category(raw or ""), "", (raw or "")
+
+
+def guess_category(text: str) -> str:
+    """给没有分类的旧商品猜分类"""
+    rules = [
+        ("数码电子", ["手机", "电脑", "耳机", "键盘", "鼠标", "iPad", "相机", "充电", "音箱", "显示器", "平板"]),
+        ("图书教材", ["书", "教材", "笔记", "试卷", "复习", "题", "英文", "词典"]),
+        ("生活用品", ["台灯", "水杯", "床", "桌", "椅", "收纳", "雨伞", "箱"]),
+        ("运动户外", ["球", "拍", "跑鞋", "健身", "瑜伽", "单车", "帐篷"]),
+        ("服饰鞋包", ["衣", "裤", "鞋", "包", "帽", "外套", "T恤"]),
+    ]
+    for cat, kws in rules:
+        if any(k in text for k in kws):
+            return cat
+    return "其他"
+
+
+# ============================================================
+#  图片存储（内容寻址，模拟 IPFS）
+# ============================================================
+# 真正的 IPFS 用文件内容的哈希作为地址，保证内容不可篡改。
+# 这里用同样的原理：SHA-256(文件内容) 作为文件名。
+# 好处：
+#   1. 同一张图重复上传只存一份（天然去重）
+#   2. 哈希写进区块链后，任何人改动图片都会导致哈希对不上
+#   3. 原理与 IPFS 一致，只是不做分布式网络那部分
+
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024   # 5MB
+
+
+def save_image(file_storage):
+    """
+    保存上传的图片，返回 (哈希, 文件名, 错误信息)
+    哈希 = 文件内容的 SHA-256，作为内容指纹
+    """
+    filename = file_storage.filename or ""
+    ext = Path(filename).suffix.lower()
+
+    if ext not in ALLOWED_EXT:
+        return None, None, f"不支持的图片格式（{ext or '未知'}），请上传 jpg/png/gif/webp"
+
+    data = file_storage.read()
+    if not data:
+        return None, None, "图片文件为空"
+    if len(data) > MAX_IMAGE_SIZE:
+        return None, None, f"图片过大（{len(data)/1024/1024:.1f}MB），请压缩到 5MB 以内"
+
+    # 内容寻址：哈希由文件内容算出
+    digest = hashlib.sha256(data).hexdigest()
+    stored_name = digest + ext
+    target = UPLOAD_DIR / stored_name
+
+    if not target.exists():
+        target.write_bytes(data)
+
+    return digest, stored_name, None
+
+
+def image_url(image_hash: str):
+    """哈希 → 可访问的 URL"""
+    if not image_hash:
+        return ""
+    for ext in ALLOWED_EXT:
+        if (UPLOAD_DIR / (image_hash + ext)).exists():
+            return f"/uploads/{image_hash}{ext}"
+    return ""
+
+
+def relative_time(ts: int) -> str:
+    """时间戳 → 相对时间描述"""
+    import time as _time
+    diff = int(_time.time()) - int(ts)
+    if diff < 60:
+        return "刚刚"
+    if diff < 3600:
+        return f"{diff // 60} 分钟前"
+    if diff < 86400:
+        return f"{diff // 3600} 小时前"
+    if diff < 86400 * 30:
+        return f"{diff // 86400} 天前"
+    return f"{diff // 86400 // 30} 个月前"
+
+
+def full_time(ts: int) -> str:
+    """时间戳 → 完整时间"""
+    return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ============================================================
+#  编译与部署
+# ============================================================
+
+def ensure_solc():
+    installed = [str(v) for v in get_installed_solc_versions()]
+    if SOLC_VERSION not in installed:
+        print(f"  正在安装 solc {SOLC_VERSION} ...")
+        install_solc(SOLC_VERSION)
+
+
+def compile_contract():
+    """编译合约，返回 abi 和 bytecode"""
+    ensure_solc()
+    source = CONTRACT_FILE.read_text(encoding="utf-8")
+    compiled = compile_standard(
+        {
+            "language": "Solidity",
+            "sources": {"SecondHandMarket.sol": {"content": source}},
+            "settings": {
+                "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}},
+                "optimizer": {"enabled": True, "runs": 200},
+            },
+        },
+        solc_version=SOLC_VERSION,
+    )
+    data = compiled["contracts"]["SecondHandMarket.sol"]["SecondHandMarket"]
+    return data["abi"], data["evm"]["bytecode"]["object"]
+
+
+# ============================================================
+#  全局状态（内存链，进程结束即重置）
+# ============================================================
+
+class AppState:
+    def __init__(self):
+        self.w3 = None
+        self.abi = None
+        self.market = None
+        self.accounts = []
+        self.contract_address = None
+        # 用户名 → 账户地址的映射（模拟登录）
+        self.user_sessions = {}
+        # 用户名 → 昵称
+        self.nicknames = {}
+        # 用户名 → 密码哈希（scrypt，绝不存明文）
+        self.credentials = {}
+        # token → 用户名（用于登出时主动作废）
+        self.revoked_tokens = set()
+        self.reset()
+
+    def reset(self, wipe_credentials: bool = False):
+        """重置整个链，回到初始状态。
+
+        参数:
+          wipe_credentials -- 是否同时清空账号密码。
+            - False（默认）：保留 credentials。链重置后老账号能直接登录，
+              不用重新注册，方便演示。代价是用户名仍被占用。
+            - True：连账号一起清空，回到完全干净的状态。自动化测试脚本
+              需要反复用同一批用户名注册时用这个。
+        """
+        self.user_sessions = {}
+        self.nicknames = {}
+        self.revoked_tokens = set()
+        if wipe_credentials:
+            self.credentials = {}
+            auth.clear_all_failures()
+            # 签名密钥也换掉，让所有旧 token 立即失效
+            auth.rotate_secret()
+            print("  ✓ 已清空全部账号密码（wipe_credentials=True）")
+        # 默认不动 credentials，否则链重置后所有人都登不上了
+
+        print("  正在编译合约...")
+        self.abi, bytecode = compile_contract()
+        print("  ✓ 编译完成")
+
+        print("  正在启动本地测试链...")
+        self.w3 = Web3(EthereumTesterProvider())
+        self.accounts = self.w3.eth.accounts
+        print(f"  ✓ 测试链启动，{len(self.accounts)} 个账户")
+
+        # ---- 调整初始余额：把每个账户的余额统一设为 100 ETH ----
+        # eth-tester 默认给每个账户 100 万测试 ETH，数字太大不便于演示
+        # （例如"余额 999999.99"这种读数毫无意义）。改成 100 ETH，
+        # 覆盖商品价格区间（0.05 ~ 3.2 ETH）绰绰有余，演示时数字也直观。
+        self._set_initial_balances(INITIAL_BALANCE_ETH)
+
+        print("  正在部署合约...")
+        contract = self.w3.eth.contract(abi=self.abi, bytecode=bytecode)
+        tx = contract.constructor().transact({"from": self.accounts[0]})
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx)
+        self.contract_address = receipt.contractAddress
+        self.market = self.w3.eth.contract(address=self.contract_address, abi=self.abi)
+        print(f"  ✓ 合约已部署：{self.contract_address}")
+
+    def _set_initial_balances(self, target_eth: float):
+        """
+        把链上所有账户的余额统一设定为 target_eth。
+
+        eth-tester 默认给每个账户 100 万测试 ETH，演示时读数太长。
+        商品价格区间是 0.05 ~ 3.2 ETH，100 ETH 足够买卖几十次。
+
+        为什么不用转账：转账要付 gas，每笔都会让余额差出零点零零几 ETH；
+        来回转账还会把中间账户的余额堆到离谱的量级。
+
+        实现方式（直接改写底层状态，需要穿透 py-evm 的几层封装）：
+          1. 在账户 trie 里写入新的 Account（余额改成目标值）
+          2. 把 trie 的节点从 journal 层落盘到 MemoryDB
+             （trie 写进的是 BatchDB，不落盘的话新状态读不到）
+          3. 把新 root hash 写进当前区块头，再 mine 一个块固定下来
+
+        注意：这会产生 1 个区块，所以必须在部署合约之前调用，
+        之后的区块记录才是干净的。
+        """
+        try:
+            import rlp
+            from eth_utils import to_canonical_address
+            from eth.rlp.accounts import Account
+
+            chain = self.w3.provider.ethereum_tester.backend.chain
+            account_db = chain.get_vm().state._account_db
+            target_wei = self.w3.to_wei(target_eth, "ether")
+
+            # 1) 改写每个账户在 trie 里的余额
+            for addr in self.accounts:
+                canonical = to_canonical_address(addr)
+                account = account_db._get_account(canonical)
+                account_db._trie[canonical] = rlp.encode(
+                    account.copy(balance=target_wei), sedes=Account
+                )
+
+            new_root = account_db._trie.root_hash
+
+            # 2) 落盘：trie 的改动堆在 BatchDB（journal）里，要手动 flush
+            batch_db = account_db._trie.db
+            memory_db = batch_db.wrapped_db.wrapped_db.wrapped_db
+            batch_db.diff().apply_to(memory_db)
+
+            # 3) 固定到区块头并出块
+            chain.header = chain.header.copy(state_root=new_root)
+            chain.mine_block()
+
+            print(f"  ✓ 初始余额已设为 {target_eth:g} ETH/账户")
+        except Exception as e:
+            # 兜底：改不动就跳过（不影响主流程，只是余额仍是默认的 100 万）
+            print(f"  ! 设定初始余额失败（{type(e).__name__}: {e}），沿用默认余额")
+
+    def get_account(self, username: str) -> str:
+        """根据用户名获取账户地址（简化版登录：用户名 → 分配一个测试账户）"""
+        if username not in self.user_sessions:
+            # 按注册顺序分配账户，跳过 accounts[0]（平台账户）
+            idx = len(self.user_sessions) + 1
+            if idx >= len(self.accounts):
+                raise ValueError("测试账户已用完（最多9个用户）")
+            self.user_sessions[username] = self.accounts[idx]
+        return self.user_sessions[username]
+
+    def addr_of(self, username: str):
+        return self.user_sessions.get(username)
+
+    # ---- 认证相关 ----
+
+    def is_registered(self, username: str) -> bool:
+        """是否已注册（有密码凭据即视为已注册）"""
+        return username in self.credentials
+
+    def set_credentials(self, username: str, password: str):
+        self.credentials[username] = auth.hash_password(password)
+
+    def check_credentials(self, username: str, password: str) -> bool:
+        stored = self.credentials.get(username)
+        if not stored:
+            return False
+        return auth.verify_password(password, stored)
+
+    def display_name(self, username: str) -> str:
+        return self.nicknames.get(username, username)
+
+
+state = AppState()
+
+# ============================================================
+#  Flask 应用
+# ============================================================
+
+app = Flask(__name__, static_folder=None)
+
+
+# ============================================================
+#  认证：装饰器 & 辅助函数
+# ============================================================
+
+def extract_token():
+    """
+    从请求里取出 token。支持两种方式：
+      1. Authorization: Bearer <token>   ← 推荐
+      2. 请求体/表单里的 token 字段        ← 兼容老前端
+    """
+    hdr = request.headers.get("Authorization") or ""
+    if hdr.lower().startswith("bearer "):
+        return hdr[7:].strip()
+
+    if request.method == "POST":
+        if request.content_type and request.content_type.startswith("multipart/form-data"):
+            return (request.form.get("token") or "").strip()
+        data = request.get_json(silent=True) or {}
+        return (data.get("token") or "").strip()
+
+    return (request.args.get("token") or "").strip()
+
+
+def current_user():
+    """返回当前登录用户名，未登录返回 None"""
+    token = extract_token()
+    username, _ = auth.verify_token(token)
+    if not username:
+        return None
+    if token in state.revoked_tokens:
+        return None
+    return username
+
+
+def require_auth(view):
+    """
+    需要登录才能访问的接口。
+    校验通过后把用户名放进 flask.g，业务代码直接取，不再信任前端传的 username。
+    """
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        token = extract_token()
+        username, remain = auth.verify_token(token)
+
+        if not username or token in state.revoked_tokens:
+            return jsonify({"success": False, "error": "登录已失效，请重新登录", "code": "AUTH_REQUIRED"}), 401
+
+        if not state.is_registered(username):
+            return jsonify({"success": False, "error": "账号不存在，请重新注册", "code": "AUTH_REQUIRED"}), 401
+
+        # 放到请求上下文，业务层用 get_auth_user() 取
+        request.auth_user = username
+        resp = view(*args, **kwargs)
+
+        # 快过期时顺便续期：在响应头里带一个新 token
+        if auth.should_renew(remain) and hasattr(resp, "headers"):
+            resp.headers["X-Renewed-Token"] = auth.create_token(username)
+        return resp
+    return wrapper
+
+
+def get_auth_user():
+    """取当前请求的登录用户（由 require_auth 注入）"""
+    return getattr(request, "auth_user", None)
+
+
+@app.route("/")
+def index():
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.route("/<path:filename>")
+def static_files(filename):
+    return send_from_directory(FRONTEND_DIR, filename)
+
+
+# ------------------------------------------------------------
+#  系统状态
+# ------------------------------------------------------------
+
+@app.route("/api/status")
+def api_status():
+    return jsonify({
+        "contract_address": state.contract_address,
+        "chain_id": state.w3.eth.chain_id,
+        "block_number": state.w3.eth.block_number,
+        "accounts_count": len(state.accounts),
+        "escrow_balance": float(state.w3.from_wei(
+            state.market.functions.getEscrowBalance().call(), "ether")),
+    })
+
+
+@app.route("/api/reset", methods=["POST"])
+def api_reset():
+    """
+    重置整条链（演示时用来恢复初始状态）。
+
+    默认保留账号密码（老账号直接登录即可）。
+    传 {"wipe_credentials": true} 会连账号一起清空，
+    让注册过的用户名重新可用（自动化测试脚本用）。
+
+    注意：这是破坏性操作，演示环境保留开放以便随时重置；
+    生产环境必须加管理员鉴权（require_auth + 角色校验）。
+    """
+    data = request.get_json(silent=True) or {}
+    wipe = bool(data.get("wipe_credentials"))
+    state.reset(wipe_credentials=wipe)
+    msg = "链已重置，请重新登录" if not wipe else "链已重置，账号密码已清空"
+    return jsonify({"success": True, "message": msg, "contract_address": state.contract_address})
+
+
+# ------------------------------------------------------------
+#  用户认证
+# ------------------------------------------------------------
+
+@app.route("/api/check_username")
+def api_check_username():
+    """检查用户名是否已被注册（注册页实时提示用）"""
+    username = (request.args.get("username") or "").strip()
+    if not username:
+        return jsonify({"success": False, "error": "请提供用户名"}), 400
+    return jsonify({
+        "success": True,
+        "username": username,
+        "taken": state.is_registered(username),
+    })
+
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    """
+    注册：创建账号 + 设置密码。
+
+    安全要点：
+      - 密码强度校验
+      - scrypt 加盐哈希后存储，明文不落盘
+      - 用户名校验，防止奇怪字符
+      - 注册成功后直接签发 token（免去二次登录）
+    """
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    nickname = (data.get("nickname") or "").strip() or username
+    password = data.get("password") or ""
+
+    # ---- 输入校验 ----
+    if not username:
+        return jsonify({"success": False, "error": "用户名不能为空"}), 400
+    if len(username) > 12:
+        return jsonify({"success": False, "error": "用户名最长 12 位"}), 400
+    if not re.match(r"^[\w\u4e00-\u9fa5]+$", username):
+        return jsonify({"success": False, "error": "用户名只能包含中文、字母、数字、下划线"}), 400
+
+    ok, msg = auth.check_password_strength(password)
+    if not ok:
+        return jsonify({"success": False, "error": msg}), 400
+
+    if state.is_registered(username):
+        return jsonify({"success": False, "error": "这个用户名已经被注册了，换一个或直接登录"}), 409
+
+    # ---- 链上注册 ----
+    try:
+        addr = state.get_account(username)
+    except ValueError:
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完（本链最多支持 9 位用户）。点「区块链浏览 → 重置整条链」可清空重置",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 400
+
+    try:
+        state.market.functions.register(nickname).transact({"from": addr})
+    except Exception:
+        # 如果链上已注册（比如链重置前注册过），尝试换一个账户
+        try:
+            idx = len(state.user_sessions)
+            if idx >= len(state.accounts):
+                raise ValueError("pool full")
+            addr = state.accounts[idx]
+            state.user_sessions[username] = addr
+            state.market.functions.register(nickname).transact({"from": addr})
+        except ValueError:
+            return jsonify({
+                "success": False,
+                "error": "演示账户已用完（本链最多支持 9 位用户）。点「区块链浏览 → 重置整条链」可清空重置",
+                "code": "ACCOUNT_POOL_FULL",
+            }), 400
+        except Exception as e2:
+            return jsonify({"success": False, "error": friendly_error(e2)}), 400
+
+    # ---- 保存凭据 + 签发 token ----
+    state.set_credentials(username, password)
+    state.nicknames[username] = nickname
+    auth.clear_failures(username)
+    token = auth.create_token(username)
+
+    return jsonify({
+        "success": True,
+        "username": username,
+        "nickname": nickname,
+        "address": addr,
+        "token": token,
+        "expires_in": auth.TOKEN_TTL,
+    })
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """
+    登录：校验密码 + 签发 token。
+
+    安全要点：
+      - 防暴力破解：连续失败会临时锁定
+      - 用户名不存在和密码错误返回同样的提示，避免枚举账号
+      - 校验通过才签发 token
+    """
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    if not username or not password:
+        return jsonify({"success": False, "error": "请输入用户名和密码"}), 400
+
+    # ---- 检查是否被锁定 ----
+    locked, remain = auth.is_locked(username)
+    if locked:
+        return jsonify({
+            "success": False,
+            "error": f"密码错误次数过多，请 {remain} 秒后再试",
+            "code": "LOCKED",
+            "retry_after": remain,
+        }), 429
+
+    # ---- 校验凭据 ----
+    if not state.is_registered(username) or not state.check_credentials(username, password):
+        auth.record_failure(username)
+        left = auth.MAX_FAILURES - auth.failure_stats(username)
+        tip = f"用户名或密码错误" + (f"，还可尝试 {left} 次" if left > 0 else "，账号已锁定")
+        return jsonify({"success": False, "error": tip, "code": "BAD_CREDENTIALS"}), 401
+
+    # ---- 成功 ----
+    auth.clear_failures(username)
+    token = auth.create_token(username)
+    addr = state.addr_of(username)
+
+    return jsonify({
+        "success": True,
+        "username": username,
+        "nickname": state.display_name(username),
+        "address": addr,
+        "token": token,
+        "expires_in": auth.TOKEN_TTL,
+    })
+
+
+@app.route("/api/logout", methods=["POST"])
+@require_auth
+def api_logout():
+    """登出：把当前 token 加入黑名单"""
+    token = extract_token()
+    if token:
+        state.revoked_tokens.add(token)
+    return jsonify({"success": True, "message": "已安全退出"})
+
+
+@app.route("/api/me")
+@require_auth
+def api_me():
+    """
+    获取当前登录用户信息。
+    这是前端的「我是谁」接口 —— 刷新页面后用它恢复登录态。
+    """
+    username = get_auth_user()
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "账号不存在"}), 404
+
+    nick, sold, bought, avg = state.market.functions.getUserInfo(addr).call()
+    balance = state.w3.eth.get_balance(addr)
+
+    return jsonify({
+        "success": True,
+        "username": username,
+        "nickname": nick or state.display_name(username),
+        "address": addr,
+        "sold_count": sold,
+        "bought_count": bought,
+        "avg_rating": round(avg / 100, 1) if avg else 0,
+        "balance_eth": round(float(state.w3.from_wei(balance, "ether")), 4),
+    })
+
+
+@app.route("/api/user/<username>")
+def api_user(username):
+    """公开的用户信息（不含任何敏感数据）"""
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "用户不存在"}), 404
+
+    nick, sold, bought, avg = state.market.functions.getUserInfo(addr).call()
+    balance = state.w3.eth.get_balance(addr)
+
+    return jsonify({
+        "success": True,
+        "username": username,
+        "nickname": nick or state.display_name(username),
+        "address": addr,
+        "sold_count": sold,
+        "bought_count": bought,
+        "avg_rating": round(avg / 100, 1) if avg else 0,
+        "balance_eth": round(float(state.w3.from_wei(balance, "ether")), 4),
+    })
+
+
+# ------------------------------------------------------------
+#  商品
+# ------------------------------------------------------------
+
+@app.route("/api/items")
+def api_items():
+    """
+    商品列表
+
+    支持的查询参数：
+      q         关键词搜索（匹配名称和描述）
+      category  按分类筛选
+      status    按状态筛选（0在售 1交易中 2已售出 3已下架）
+      sort      排序：newest(默认) / price_asc / price_desc / hot
+      page      页码，从 1 开始
+      page_size 每页数量，默认 12
+    """
+    q = (request.args.get("q") or "").strip().lower()
+    category = (request.args.get("category") or "").strip()
+    status_filter = request.args.get("status")
+    sort = request.args.get("sort") or "newest"
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except ValueError:
+        page = 1
+    try:
+        page_size = min(48, max(1, int(request.args.get("page_size", 12))))
+    except ValueError:
+        page_size = 12
+
+    count = state.market.functions.getItemCount().call()
+    status_names = {0: "在售", 1: "交易中", 2: "已售出", 3: "已下架"}
+    all_items = []
+    # 分类统计
+    category_counts = {c: 0 for c in CATEGORIES}
+
+    for i in range(1, count + 1):
+        raw = state.market.functions.getItem(i).call()
+
+        seller_addr = raw[4]
+        nick, sold, bought, avg = state.market.functions.getUserInfo(seller_addr).call()
+        seller_name = nick or seller_addr[:10] + "..."
+
+        cat, img_hash, pure_desc = decode_description(raw[2])
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        # 买家昵称
+        buyer_name = ""
+        if raw[5] and raw[5] != "0x0000000000000000000000000000000000000000":
+            bnick, _, _, _ = state.market.functions.getUserInfo(raw[5]).call()
+            buyer_name = bnick or raw[5][:10] + "..."
+
+        item = {
+            "id": raw[0],
+            "name": raw[1],
+            "description": pure_desc,
+            "category": cat,
+            "image_hash": img_hash,
+            "image_url": image_url(img_hash),
+            "price_eth": round(float(state.w3.from_wei(raw[3], "ether")), 4),
+            "price_wei": str(raw[3]),
+            "seller_address": seller_addr,
+            "seller_name": seller_name,
+            "seller_rating": round(avg / 100, 1) if avg else 0,
+            "seller_sold": sold,
+            "buyer_address": raw[5],
+            "buyer_name": buyer_name,
+            "status": raw[6],
+            "status_text": status_names.get(raw[6], "未知"),
+            "created_at": raw[7],
+            "created_text": relative_time(raw[7]),
+            "created_full": full_time(raw[7]),
+        }
+
+        # ---- 筛选 ----
+        if q:
+            haystack = (item["name"] + " " + item["description"] + " " + item["category"]).lower()
+            if q not in haystack:
+                continue
+        if category and category != "全部":
+            if item["category"] != category:
+                continue
+        if status_filter is not None and status_filter != "":
+            try:
+                if item["status"] != int(status_filter):
+                    continue
+            except ValueError:
+                pass
+
+        all_items.append(item)
+
+    # ---- 排序 ----
+    if sort == "price_asc":
+        all_items.sort(key=lambda x: x["price_eth"])
+    elif sort == "price_desc":
+        all_items.sort(key=lambda x: x["price_eth"], reverse=True)
+    elif sort == "hot":
+        # 在售优先 + 卖家信誉高的优先
+        all_items.sort(key=lambda x: (x["status"] != 0, -x["seller_rating"]))
+    else:  # newest
+        all_items.sort(key=lambda x: x["id"], reverse=True)
+
+    # ---- 分页 ----
+    total_filtered = len(all_items)
+    start = (page - 1) * page_size
+    page_items = all_items[start:start + page_size]
+
+    # ---- 全局统计 ----
+    stats = {
+        "total": count,
+        "onsale": sum(1 for x in all_items if x["status"] == 0) if not q and not category else None,
+        "categories": category_counts,
+    }
+    # 统计在售数量（不受筛选影响）
+    onsale_all = 0
+    for i in range(1, count + 1):
+        raw = state.market.functions.getItem(i).call()
+        if raw[6] == 0:
+            onsale_all += 1
+    stats["onsale"] = onsale_all
+
+    return jsonify({
+        "success": True,
+        "items": page_items,
+        "total": total_filtered,
+        "all_total": count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total_filtered + page_size - 1) // page_size),
+        "stats": stats,
+    })
+
+
+@app.route("/api/items", methods=["POST"])
+@require_auth
+def api_new_item():
+    """上架商品。支持两种提交方式：
+      1. JSON  —— 不带图片时
+      2. multipart/form-data —— 带图片文件时（字段名 image）
+
+    安全：卖家身份取自登录 token，不接受前端传入的 username。
+    """
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        data = request.form
+        image_file = request.files.get("image")
+    else:
+        data = request.get_json() or {}
+        image_file = None
+
+    username = get_auth_user()
+    name = (data.get("name") or "").strip()
+    description = (data.get("description") or "").strip()
+    category = (data.get("category") or "其他").strip()
+    price_eth = data.get("price_eth")
+
+    if not name:
+        return jsonify({"success": False, "error": "商品名称不能为空"}), 400
+
+    if len(name) > 50:
+        return jsonify({"success": False, "error": "商品名称最长 50 个字符"}), 400
+
+    try:
+        price_float = float(price_eth)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "请填写有效价格"}), 400
+    if price_float <= 0:
+        return jsonify({"success": False, "error": "价格必须大于0"}), 400
+    if price_float > 10000:
+        return jsonify({"success": False, "error": "价格超出合理范围"}), 400
+
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "用户未注册，请先注册"}), 400
+
+    # ---- 处理图片（可选）----
+    image_hash = ""
+    if image_file and image_file.filename:
+        digest, stored_name, err = save_image(image_file)
+        if err:
+            return jsonify({"success": False, "error": err}), 400
+        image_hash = digest
+
+    try:
+        price_wei = state.w3.to_wei(price_float, "ether")
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "价格格式不正确"}), 400
+
+    # 把分类和图片哈希编码进描述，这样不用改合约就能支持扩展字段
+    encoded_desc = encode_description(category, description, image_hash)
+
+    try:
+        state.market.functions.listItem(name, encoded_desc, price_wei).transact({"from": addr})
+    except Exception as e:
+        return jsonify({"success": False, "error": friendly_error(e)}), 400
+
+    return jsonify({
+        "success": True,
+        "message": f"商品「{name}」已上架到区块链",
+        "category": category,
+        "image_hash": image_hash,
+        "image_url": image_url(image_hash),
+    })
+
+
+# ------------------------------------------------------------
+#  图片上传
+# ------------------------------------------------------------
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    """提供已上传图片的访问"""
+    return send_from_directory(UPLOAD_DIR, filename)
+
+
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    """
+    单独上传图片（上架前预览用）。
+    返回内容哈希 —— 这就是"内容寻址"：地址由内容决定。
+    真正的 IPFS 也是这个原理，只是它还会把文件分发到全球节点。
+    """
+    if "image" not in request.files:
+        return jsonify({"success": False, "error": "没有收到图片文件"}), 400
+
+    digest, stored_name, err = save_image(request.files["image"])
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+
+    return jsonify({
+        "success": True,
+        "image_hash": digest,
+        "image_url": f"/uploads/{stored_name}",
+        "size_note": "已按内容哈希去重存储",
+    })
+
+
+@app.route("/api/verify_image", methods=["POST"])
+def api_verify_image():
+    """
+    校验图片是否被篡改。
+    前端传入哈希，后端重新对磁盘上文件算一遍哈希比对。
+    —— 这就是内容寻址的防篡改特性：改一个字节，哈希就完全不同。
+    """
+    data = request.get_json() or {}
+    claimed = (data.get("image_hash") or "").strip()
+    if not claimed:
+        return jsonify({"success": False, "error": "缺少 image_hash"}), 400
+
+    url = image_url(claimed)
+    if not url:
+        return jsonify({"success": False, "verified": False, "error": "链上哈希对应的文件不存在"}), 404
+
+    path = UPLOAD_DIR / url.split("/")[-1]
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    verified = (actual == claimed)
+
+    return jsonify({
+        "success": True,
+        "verified": verified,
+        "on_chain_hash": claimed,
+        "actual_hash": actual,
+        "message": "内容完整，与链上哈希一致" if verified else "警告：文件内容与链上哈希不符，可能已被篡改",
+    })
+
+
+@app.route("/api/categories")
+def api_categories():
+    """返回分类列表和每个分类的商品数"""
+    count = state.market.functions.getItemCount().call()
+    counts = {c: 0 for c in CATEGORIES}
+    for i in range(1, count + 1):
+        raw = state.market.functions.getItem(i).call()
+        cat, _ = decode_description(raw[2])
+        counts[cat] = counts.get(cat, 0) + 1
+    return jsonify({"success": True, "categories": CATEGORIES, "counts": counts})
+
+
+@app.route("/api/items/<int:item_id>")
+def api_item_detail(item_id):
+    """单个商品详情"""
+    try:
+        raw = state.market.functions.getItem(item_id).call()
+    except Exception:
+        return jsonify({"success": False, "error": "商品不存在"}), 404
+
+    status_names = {0: "在售", 1: "交易中", 2: "已售出", 3: "已下架"}
+    seller_addr = raw[4]
+    nick, sold, bought, avg = state.market.functions.getUserInfo(seller_addr).call()
+    cat, img_hash, pure_desc = decode_description(raw[2])
+
+    buyer_name = ""
+    if raw[5] and raw[5] != "0x0000000000000000000000000000000000000000":
+        bnick, _, _, _ = state.market.functions.getUserInfo(raw[5]).call()
+        buyer_name = bnick or raw[5][:10] + "..."
+
+    return jsonify({
+        "success": True,
+        "item": {
+            "id": raw[0],
+            "name": raw[1],
+            "description": pure_desc,
+            "category": cat,
+            "image_hash": img_hash,
+            "image_url": image_url(img_hash),
+            "price_eth": round(float(state.w3.from_wei(raw[3], "ether")), 4),
+            "price_wei": str(raw[3]),
+            "seller_address": seller_addr,
+            "seller_name": nick or seller_addr[:10] + "...",
+            "seller_rating": round(avg / 100, 1) if avg else 0,
+            "seller_sold": sold,
+            "buyer_address": raw[5],
+            "buyer_name": buyer_name,
+            "status": raw[6],
+            "status_text": status_names.get(raw[6], "未知"),
+            "created_at": raw[7],
+            "created_text": relative_time(raw[7]),
+            "created_full": full_time(raw[7]),
+        }
+    })
+
+
+@app.route("/api/buy", methods=["POST"])
+@require_auth
+def api_buy():
+    data = request.get_json() or {}
+    username = get_auth_user()          # 身份以 token 为准，不信前端
+    item_id = data.get("item_id")
+
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+
+    try:
+        item = state.market.functions.getItem(int(item_id)).call()
+        price = item[3]
+        state.market.functions.buyItem(int(item_id)).transact({
+            "from": addr, "value": price
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": friendly_error(e)}), 400
+
+    return jsonify({
+        "success": True,
+        "message": f"下单成功，{state.w3.from_wei(price, 'ether')} ETH 已进入合约托管",
+        "tx_hash": "链上已确认",
+    })
+
+
+@app.route("/api/confirm", methods=["POST"])
+@require_auth
+def api_confirm():
+    data = request.get_json() or {}
+    username = get_auth_user()
+    item_id = data.get("item_id")
+
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+
+    try:
+        state.market.functions.confirmReceived(int(item_id)).transact({"from": addr})
+    except Exception as e:
+        return jsonify({"success": False, "error": friendly_error(e)}), 400
+
+    return jsonify({"success": True, "message": "确认收货成功，货款已放给卖家（扣除1%平台费）"})
+
+
+@app.route("/api/remove", methods=["POST"])
+@require_auth
+def api_remove():
+    data = request.get_json() or {}
+    username = get_auth_user()
+    item_id = data.get("item_id")
+
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+
+    try:
+        state.market.functions.removeItem(int(item_id)).transact({"from": addr})
+    except Exception as e:
+        return jsonify({"success": False, "error": friendly_error(e)}), 400
+
+    return jsonify({"success": True, "message": "商品已下架"})
+
+
+@app.route("/api/rate", methods=["POST"])
+@require_auth
+def api_rate():
+    data = request.get_json() or {}
+    username = get_auth_user()
+    item_id = data.get("item_id")
+    score = data.get("score")
+    target = (data.get("target") or "").strip()   # 被评价人的用户名
+
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+
+    # 评分范围校验（合约里也有，这里提前拦一道，省一次上链）
+    try:
+        score_int = int(score)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "评分必须是 1-5 的整数"}), 400
+    if not 1 <= score_int <= 5:
+        return jsonify({"success": False, "error": "评分必须在 1-5 之间"}), 400
+
+    if target == username:
+        return jsonify({"success": False, "error": "不能评价自己"}), 400
+
+    target_addr = state.addr_of(target)
+    if not target_addr:
+        return jsonify({"success": False, "error": f"用户 {target} 不存在"}), 400
+
+    try:
+        state.market.functions.rate(int(item_id), target_addr, score_int).transact({"from": addr})
+    except Exception as e:
+        return jsonify({"success": False, "error": friendly_error(e)}), 400
+
+    return jsonify({"success": True, "message": f"已给 {target} 评 {score_int} 星"})
+
+
+@app.route("/api/my_items")
+@require_auth
+def api_my_items():
+    """
+    当前登录用户的交易记录。
+    服务端按 token 里的身份过滤 —— 前端传什么 username 都没用。
+    """
+    username = get_auth_user()
+    my_addr = (state.addr_of(username) or "").lower()
+    count = state.market.functions.getItemCount().call()
+    status_names = {0: "在售", 1: "交易中", 2: "已售出", 3: "已下架"}
+    mine = []
+
+    for i in range(1, count + 1):
+        raw = state.market.functions.getItem(i).call()
+        seller = raw[4].lower()
+        buyer = (raw[5] or "").lower()
+        if my_addr != seller and my_addr != buyer:
+            continue
+
+        cat, img_hash, pure_desc = decode_description(raw[2])
+
+        seller_nick, _, _, _ = state.market.functions.getUserInfo(raw[4]).call()
+        buyer_name = ""
+        if raw[5] and raw[5] != "0x0000000000000000000000000000000000000000":
+            buyer_nick, _, _, _ = state.market.functions.getUserInfo(raw[5]).call()
+            buyer_name = buyer_nick or raw[5][:10] + "..."
+
+        mine.append({
+            "id": raw[0],
+            "name": raw[1],
+            "description": pure_desc,
+            "category": cat,
+            "image_hash": img_hash,
+            "image_url": image_url(img_hash),
+            "price_eth": round(float(state.w3.from_wei(raw[3], "ether")), 4),
+            "seller_address": raw[4],
+            "seller_name": seller_nick or raw[4][:10] + "...",
+            "buyer_address": raw[5],
+            "buyer_name": buyer_name,
+            "is_seller": my_addr == seller,
+            "status": raw[6],
+            "status_text": status_names.get(raw[6], "未知"),
+            "created_at": raw[7],
+            "created_text": relative_time(raw[7]),
+        })
+
+    mine.sort(key=lambda x: x["id"], reverse=True)
+    return jsonify({"success": True, "items": mine, "total": len(mine)})
+
+
+@app.route("/api/transactions")
+def api_transactions():
+    """返回链上最近的交易记录（模拟区块链浏览器）"""
+    block_number = state.w3.eth.block_number
+    txs = []
+
+    for i in range(max(0, block_number - 20), block_number + 1):
+        try:
+            block = state.w3.eth.get_block(i, full_transactions=True)
+        except Exception:
+            continue
+        for tx in block.transactions:
+            txs.append({
+                "block": i,
+                "hash": tx.hash.hex(),
+                "from": tx["from"],
+                "to": tx["to"],
+                "value_eth": round(float(state.w3.from_wei(tx["value"], "ether")), 6),
+                "gas": tx.gas,
+            })
+
+    txs.reverse()
+    return jsonify({"success": True, "transactions": txs[:30], "block_number": block_number})
+
+
+# ============================================================
+#  交易时间线（从链上事件日志还原）
+# ============================================================
+# 关键点：这些数据不是后端自己"记"的，而是从区块链的事件日志里读出来的。
+# 合约在执行每一步操作时都会 emit 一个事件，事件永久保存在链上。
+# 所以时间线就是"区块历史上真实发生过什么"的忠实还原。
+
+def nick_or_addr(addr: str) -> str:
+    """地址 → 昵称（查不到就截断地址）"""
+    if not addr or addr == "0x0000000000000000000000000000000000000000":
+        return "—"
+    try:
+        nick, _, _, _ = state.market.functions.getUserInfo(addr).call()
+    except Exception:
+        nick = ""
+    return nick or (addr[:10] + "...")
+
+
+def event_time(block_number: int) -> int:
+    """取某个区块的时间戳"""
+    try:
+        return state.w3.eth.get_block(block_number)["timestamp"]
+    except Exception:
+        return 0
+
+
+@app.route("/api/timeline/<int:item_id>")
+def api_timeline(item_id):
+    """
+    某件商品的完整流转时间线。
+    按区块顺序，从 ItemListed → ItemPurchased → ItemDelivered 逐步还原。
+    """
+    try:
+        item = state.market.functions.getItem(item_id).call()
+    except Exception:
+        return jsonify({"success": False, "error": "商品不存在"}), 404
+
+    data = json.dumps({"item_id": item_id})
+    steps = []
+    # ---- 1. 上架 ----
+    try:
+        listed = state.market.events.ItemListed.get_logs(
+            from_block=0, argument_filters={"itemId": item_id})
+    except Exception:
+        listed = []
+    for ev in listed:
+        a = ev["args"]
+        steps.append({
+            "block": ev["blockNumber"],
+            "type": "listed",
+            "icon": "📦",
+            "title": "商品上架",
+            "actor": nick_or_addr(a["seller"]),
+            "actor_addr": a["seller"],
+            "detail": f"以 {round(float(state.w3.from_wei(a['price'], 'ether')), 4)} ETH 挂出",
+            "amount_eth": round(float(state.w3.from_wei(a["price"], "ether")), 4),
+            "time": event_time(ev["blockNumber"]),
+        })
+
+    # ---- 2. 购买（资金进托管）----
+    try:
+        purchased = state.market.events.ItemPurchased.get_logs(
+            from_block=0, argument_filters={"itemId": item_id})
+    except Exception:
+        purchased = []
+    for ev in purchased:
+        a = ev["args"]
+        steps.append({
+            "block": ev["blockNumber"],
+            "type": "purchased",
+            "icon": "🔒",
+            "title": "买家下单 · 资金进入合约托管",
+            "actor": nick_or_addr(a["buyer"]),
+            "actor_addr": a["buyer"],
+            "detail": f"{round(float(state.w3.from_wei(a['amount'], 'ether')), 4)} ETH 已锁定在合约中，卖家暂时拿不到",
+            "amount_eth": round(float(state.w3.from_wei(a["amount"], "ether")), 4),
+            "time": event_time(ev["blockNumber"]),
+        })
+
+    # ---- 3. 确认收货（放款）----
+    try:
+        delivered = state.market.events.ItemDelivered.get_logs(
+            from_block=0, argument_filters={"itemId": item_id})
+    except Exception:
+        delivered = []
+    for ev in delivered:
+        a = ev["args"]
+        gross = item[3]
+        fee_bps = state.market.functions.platformFeeRate().call()
+        fee = gross * fee_bps // 10000
+        net = gross - fee
+        steps.append({
+            "block": ev["blockNumber"],
+            "type": "delivered",
+            "icon": "✅",
+            "title": "买家确认收货 · 货款放给卖家",
+            "actor": nick_or_addr(a["buyer"]),
+            "actor_addr": a["buyer"],
+            "detail": f"卖家到账 {round(float(state.w3.from_wei(net, 'ether')), 4)} ETH（扣平台费 {round(float(state.w3.from_wei(fee, 'ether')), 4)} ETH）",
+            "amount_eth": round(float(state.w3.from_wei(net, "ether")), 4),
+            "time": event_time(ev["blockNumber"]),
+        })
+
+    # ---- 4. 下架 ----
+    try:
+        removed = state.market.events.ItemRemoved.get_logs(
+            from_block=0, argument_filters={"itemId": item_id})
+    except Exception:
+        removed = []
+    for ev in removed:
+        a = ev["args"]
+        steps.append({
+            "block": ev["blockNumber"],
+            "type": "removed",
+            "icon": "🚫",
+            "title": "卖家下架商品",
+            "actor": nick_or_addr(a["seller"]),
+            "actor_addr": a["seller"],
+            "detail": "商品不再对外出售",
+            "amount_eth": 0,
+            "time": event_time(ev["blockNumber"]),
+        })
+
+    # ---- 5. 评价（买卖双方都可评）----
+    try:
+        rated = state.market.events.Rated.get_logs(from_block=0)
+    except Exception:
+        rated = []
+    for ev in rated:
+        a = ev["args"]
+        if a["itemId"] != item_id:
+            continue
+        steps.append({
+            "block": ev["blockNumber"],
+            "type": "rated",
+            "icon": "⭐",
+            "title": f"{nick_or_addr(a['from'])} 评价了 {nick_or_addr(a['to'])}",
+            "actor": nick_or_addr(a["from"]),
+            "actor_addr": a["from"],
+            "detail": "★" * a["score"] + "☆" * (5 - a["score"]),
+            "amount_eth": 0,
+            "score": a["score"],
+            "time": event_time(ev["blockNumber"]),
+        })
+
+    # ---- 按区块排序 ----
+    steps.sort(key=lambda s: s["block"])
+
+    # 补全时间文本
+    for s in steps:
+        s["time_text"] = full_time(s["time"]) if s["time"] else "—"
+
+    return jsonify({
+        "success": True,
+        "item_id": item_id,
+        "item_name": item[1],
+        "status": item[6],
+        "steps": steps,
+        "step_count": len(steps),
+    })
+
+
+# ============================================================
+#  数据看板（全部由链上数据实时统计得出）
+# ============================================================
+
+@app.route("/api/dashboard")
+def api_dashboard():
+    """
+    数据看板：成交额趋势、分类占比、价格区间分布、核心指标。
+    所有数字都是从链上逐条读取后现算的，不是预先存好的。
+    """
+    count = state.market.functions.getItemCount().call()
+    fee_bps = state.market.functions.platformFeeRate().call()
+
+    total_gmv = 0.0          # 已完成成交总额
+    total_locked = 0.0       # 当前托管中金额
+    onsale = 0
+    sold = 0
+    in_escrow = 0
+    removed = 0
+    cat_sold_amount = {c: 0.0 for c in CATEGORIES}
+    cat_sold_count = {c: 0 for c in CATEGORIES}
+    cat_list_count = {c: 0 for c in CATEGORIES}
+    price_buckets = {"0-0.1": 0, "0.1-0.5": 0, "0.5-1": 0, "1-5": 0, "5+": 0}
+    daily_gmv = {}           # 日期 → 成交额
+    all_records = []
+
+    for i in range(1, count + 1):
+        raw = state.market.functions.getItem(i).call()
+        status = raw[6]
+        price_eth = float(state.w3.from_wei(raw[3], "ether"))
+        cat, _, _ = decode_description(raw[2])
+
+        cat_list_count[cat] = cat_list_count.get(cat, 0) + 1
+
+        # 价格区间分布（只统计在售 + 已售出的真实成交价）
+        if status in (0, 2):
+            if price_eth < 0.1:
+                price_buckets["0-0.1"] += 1
+            elif price_eth < 0.5:
+                price_buckets["0.1-0.5"] += 1
+            elif price_eth < 1:
+                price_buckets["0.5-1"] += 1
+            elif price_eth < 5:
+                price_buckets["1-5"] += 1
+            else:
+                price_buckets["5+"] += 1
+
+        if status == 0:
+            onsale += 1
+        elif status == 1:
+            in_escrow += 1
+            total_locked += price_eth
+        elif status == 2:
+            sold += 1
+            total_gmv += price_eth
+            cat_sold_amount[cat] = cat_sold_amount.get(cat, 0) + price_eth
+            cat_sold_count[cat] = cat_sold_count.get(cat, 0) + 1
+        elif status == 3:
+            removed += 1
+
+    # ---- 成交额趋势（从 ItemDelivered 事件还原每日成交）----
+    try:
+        delivered_logs = state.market.events.ItemDelivered.get_logs(from_block=0)
+    except Exception:
+        delivered_logs = []
+
+    for ev in delivered_logs:
+        iid = ev["args"]["itemId"]
+        try:
+            raw = state.market.functions.getItem(iid).call()
+            price_eth = float(state.w3.from_wei(raw[3], "ether"))
+        except Exception:
+            continue
+        ts = event_time(ev["blockNumber"])
+        day = datetime.fromtimestamp(ts).strftime("%m-%d")
+        daily_gmv[day] = round(daily_gmv.get(day, 0) + price_eth, 4)
+
+    # 按时间排序
+    trend_labels = sorted(daily_gmv.keys())
+    trend_values = [daily_gmv[d] for d in trend_labels]
+
+    # ---- 分类占比（按成交金额）----
+    donut_labels = [c for c in CATEGORIES if cat_sold_amount.get(c, 0) > 0]
+    donut_values = [round(cat_sold_amount[c], 4) for c in donut_labels]
+    if not donut_labels:
+        # 没有成交时，退化成"上架数量"占比，保证图表不空白
+        donut_labels = [c for c in CATEGORIES if cat_list_count.get(c, 0) > 0]
+        donut_values = [cat_list_count[c] for c in donut_labels]
+
+    avg_price = round(total_gmv / sold, 4) if sold else 0.0
+    platform_fee = round(total_gmv * fee_bps / 10000, 6)
+
+    return jsonify({
+        "success": True,
+        "metrics": {
+            "total_items": count,
+            "onsale": onsale,
+            "in_escrow": in_escrow,
+            "sold": sold,
+            "removed": removed,
+            "gmv_eth": round(total_gmv, 4),
+            "locked_eth": round(total_locked, 4),
+            "avg_price_eth": avg_price,
+            "platform_fee_eth": platform_fee,
+            "escrow_balance_eth": round(float(state.w3.from_wei(
+                state.market.functions.getEscrowBalance().call(), "ether")), 4),
+        },
+        "trend": {"labels": trend_labels, "values": trend_values},
+        "donut": {
+            "labels": donut_labels,
+            "values": donut_values,
+            "is_amount": bool(cat_sold_amount and any(cat_sold_amount.values())),
+        },
+        "price_buckets": {
+            "labels": list(price_buckets.keys()),
+            "values": list(price_buckets.values()),
+        },
+    })
+
+
+# ============================================================
+#  启动
+# ============================================================
+
+if __name__ == "__main__":
+    print()
+    print("=" * 64)
+    print("  区块链二手交易平台 —— 后端服务")
+    print("=" * 64)
+    print()
+
+    print(f"  合约地址：{state.contract_address}")
+    print(f"  前端地址：http://127.0.0.1:5000")
+    print()
+    print("  测试账户：")
+    for i, a in enumerate(state.accounts[:4]):
+        bal = state.w3.from_wei(state.w3.eth.get_balance(a), "ether")
+        label = "平台方" if i == 0 else f"用户{i}"
+        print(f"    [{label}] {a}  余额 {bal} ETH")
+    print()
+    print("=" * 64)
+    print("  按 Ctrl+C 停止服务")
+    print("=" * 64)
+    print()
+
+    app.run(host="127.0.0.1", port=5000, debug=False)

@@ -1,0 +1,3428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>链易 · 基于区块链的二手交易平台</title>
+<style>
+  /* ============================================================
+     设计变量
+     ============================================================ */
+  :root {
+    --primary:       #1D5DB8;
+    --primary-hover: #174C96;
+    --primary-light: #EAF2FC;
+    --primary-border:#BCD7F4;
+
+    --success:       #0E7C5A;
+    --success-light: #E6F6F0;
+    --success-border:#A8DFCB;
+
+    --danger:        #C0392B;
+    --danger-light:  #FDECEA;
+    --danger-border: #F5B7B1;
+
+    --warning:       #B7791F;
+    --warning-light: #FDF6E3;
+    --warning-border:#F0DCA8;
+
+    --purple:        #6B4EE6;
+    --purple-light:  #F0EDFE;
+    --purple-border: #CFC4F8;
+
+    --text:    #1A1D21;
+    --text-2:  #5A6170;
+    --text-3:  #8B93A3;
+    --text-4:  #B4BAC6;
+
+    --border:  #E4E7EC;
+    --border-2:#D0D5DD;
+
+    --bg:      #F7F8FA;
+    --card:    #FFFFFF;
+
+    --radius:    12px;
+    --radius-sm: 8px;
+    --radius-lg: 16px;
+
+    --shadow-sm: 0 1px 2px rgba(16,24,40,.05);
+    --shadow:    0 2px 8px rgba(16,24,40,.07);
+    --shadow-lg: 0 8px 24px rgba(16,24,40,.10);
+    --shadow-xl: 0 16px 48px rgba(16,24,40,.16);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============================================================
+     顶栏
+     ============================================================ */
+  header {
+    background: rgba(255,255,255,.88);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 200;
+  }
+  .header-inner {
+    max-width: 1240px; margin: 0 auto;
+    padding: 0 24px; height: 64px;
+    display: flex; align-items: center; gap: 28px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 16px; font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .logo-mark {
+    width: 30px; height: 30px;
+    background: linear-gradient(135deg, var(--primary) 0%, #2D7FE0 100%);
+    border-radius: 9px;
+    display: grid; place-items: center;
+    color: #fff; font-size: 14px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(29,93,184,.28);
+  }
+  .logo-sub {
+    font-size: 11px; color: var(--text-3);
+    font-weight: 400; margin-left: 2px;
+  }
+
+  nav { display: flex; gap: 2px; }
+  nav button {
+    background: none; border: none; cursor: pointer;
+    padding: 8px 15px; border-radius: var(--radius-sm);
+    font-size: 14px; font-family: inherit; font-weight: 500;
+    color: var(--text-2);
+    transition: all .16s ease;
+    position: relative;
+  }
+  nav button:hover { background: var(--bg); color: var(--text); }
+  nav button.active {
+    background: var(--primary-light);
+    color: var(--primary);
+  }
+
+  .chain-status {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 16px;
+    font-size: 12px; color: var(--text-3);
+    flex-shrink: 0;
+  }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 20px;
+    background: var(--success-light);
+    color: var(--success);
+    font-weight: 500;
+    transition: all .2s;
+  }
+  .status-pill.off { background: var(--danger-light); color: var(--danger); }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+    position: relative;
+  }
+  .status-pill:not(.off) .dot::after {
+    content: ''; position: absolute; inset: 0;
+    border-radius: 50%; background: currentColor;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: .7; }
+    50%      { transform: scale(2.2); opacity: 0; }
+  }
+  .block-badge {
+    padding: 5px 11px; border-radius: 20px;
+    background: var(--bg); border: 1px solid var(--border);
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px;
+  }
+
+  /* ============================================================
+     布局
+     ============================================================ */
+  main { max-width: 1240px; margin: 0 auto; padding: 24px 24px 60px; }
+
+  .view { display: none; animation: fadeUp .28s ease; }
+  .view.active { display: block; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .page-head { margin-bottom: 20px; }
+  .page-title {
+    font-size: 20px; font-weight: 600;
+    letter-spacing: -.01em;
+    margin-bottom: 5px;
+  }
+  .page-desc { font-size: 13px; color: var(--text-2); }
+
+  /* ============================================================
+     卡片
+     ============================================================ */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .card + .card { margin-top: 16px; }
+  .card-title {
+    font-size: 14px; font-weight: 600;
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title::before {
+    content: ''; width: 3px; height: 14px;
+    background: var(--primary); border-radius: 2px;
+  }
+
+  /* ============================================================
+     登录栏
+     ============================================================ */
+  .login-bar {
+    display: flex; align-items: center; gap: 14px;
+    background: linear-gradient(100deg, var(--primary-light) 0%, #F5F9FF 100%);
+    border: 1px solid var(--primary-border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary) 0%, #2D7FE0 100%);
+    color: #fff; display: grid; place-items: center;
+    font-size: 15px; font-weight: 600;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(29,93,184,.25);
+  }
+  .login-text { flex-grow: 1; min-width: 0; }
+  .login-name {
+    font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  .login-meta {
+    font-size: 12px; color: var(--text-2);
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap; margin-top: 2px;
+  }
+  .login-meta code {
+    font-family: ui-monospace, Consolas, monospace;
+    background: rgba(255,255,255,.7);
+    padding: 1px 6px; border-radius: 4px;
+    font-size: 11px;
+  }
+
+  /* ============================================================
+     登录 / 注册卡片
+     ============================================================ */
+  .auth-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    padding: 22px 24px;
+    margin-bottom: 22px;
+    max-width: 520px;
+    animation: authIn .32s cubic-bezier(.34,1.15,.64,1);
+  }
+  @keyframes authIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .auth-head {
+    display: flex; align-items: center; gap: 13px;
+    margin-bottom: 20px;
+  }
+  .auth-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--primary) 0%, #2D7FE0 100%);
+    display: grid; place-items: center;
+    font-size: 20px; flex-shrink: 0;
+    box-shadow: 0 3px 10px rgba(29,93,184,.25);
+  }
+  .auth-title { font-size: 16px; font-weight: 650; margin-bottom: 2px; }
+  .auth-sub { font-size: 12px; color: var(--text-3); }
+
+  .auth-actions { display: flex; gap: 10px; margin-top: 18px; }
+
+  .auth-msg {
+    font-size: 12.5px; line-height: 1.6;
+    padding: 0; border-radius: var(--radius-sm);
+    margin-top: 12px; display: none;
+  }
+  .auth-msg.show { display: block; padding: 9px 12px; }
+  .auth-msg.error {
+    background: var(--danger-light); color: var(--danger);
+    border: 1px solid var(--danger-border);
+  }
+  .auth-msg.ok {
+    background: var(--success-light); color: var(--success);
+    border: 1px solid var(--success-border);
+  }
+  .auth-msg.warn {
+    background: var(--warning-light); color: var(--warning);
+    border: 1px solid var(--warning-border);
+  }
+
+  .field-tip {
+    font-size: 11.5px; color: var(--text-3);
+    margin-top: 5px; min-height: 0; line-height: 1.5;
+  }
+  .field-tip.err { color: var(--danger); }
+  .field-tip.ok  { color: var(--success); }
+
+  .pwd-wrap { position: relative; }
+  .pwd-wrap input { padding-right: 42px; }
+  .pwd-toggle {
+    position: absolute; right: 6px; top: 50%;
+    transform: translateY(-50%);
+    width: 30px; height: 30px;
+    border: none; background: none; cursor: pointer;
+    font-size: 14px; line-height: 1;
+    border-radius: 6px; color: var(--text-3);
+    display: grid; place-items: center;
+    transition: all .15s ease;
+  }
+  .pwd-toggle:hover { background: var(--bg); color: var(--text); }
+
+  .auth-strength {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 9px;
+  }
+  .strength-bars { display: flex; gap: 4px; flex: 1; }
+  .strength-bars .sb {
+    height: 4px; flex: 1; border-radius: 2px;
+    background: var(--border); transition: background .2s ease;
+  }
+  .strength-bars.s1 .sb:nth-child(1) { background: var(--danger); }
+  .strength-bars.s2 .sb:nth-child(-n+2) { background: var(--warning); }
+  .strength-bars.s3 .sb { background: var(--success); }
+  .strength-text { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+
+  .auth-note {
+    margin-top: 18px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11.5px; color: var(--text-3); line-height: 1.6;
+  }
+
+  /* 已登录后的用户条（复用原样式） */
+  .login-bar {
+    display: flex; align-items: center; gap: 14px;
+    background: linear-gradient(100deg, var(--primary-light) 0%, #F5F9FF 100%);
+    border: 1px solid var(--primary-border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary) 0%, #2D7FE0 100%);
+    color: #fff; display: grid; place-items: center;
+    font-size: 15px; font-weight: 600;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(29,93,184,.25);
+  }
+  .login-text { flex-grow: 1; min-width: 0; }
+  .login-name {
+    font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  .login-meta {
+    font-size: 12px; color: var(--text-2);
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap; margin-top: 2px;
+  }
+
+  .star-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 12px; font-weight: 500;
+    color: var(--warning);
+    background: var(--warning-light);
+    padding: 2px 8px; border-radius: 20px;
+  }
+
+  .verified-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 11px; font-weight: 500;
+    color: var(--success);
+    background: var(--success-light);
+    border: 1px solid var(--success-border);
+    padding: 1px 8px; border-radius: 20px;
+  }
+  .verified-badge::before { content: '🔒'; font-size: 9px; }
+
+  /* ============================================================
+     表单
+     ============================================================ */
+  .field { margin-bottom: 16px; }
+  .field label {
+    display: block; font-size: 13px; font-weight: 500;
+    color: var(--text-2); margin-bottom: 7px;
+  }
+  .field .req { color: var(--danger); margin-left: 2px; }
+
+  input[type=text], input[type=number], textarea, select {
+    width: 100%;
+    padding: 10px 13px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm);
+    font-size: 14px; font-family: inherit;
+    background: #fff; color: var(--text);
+    transition: all .16s ease;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(29,93,184,.10);
+  }
+  input::placeholder, textarea::placeholder { color: var(--text-4); }
+  textarea { resize: vertical; min-height: 88px; line-height: 1.6; }
+
+  .input-wrap { position: relative; }
+  .char-count {
+    position: absolute; right: 12px; bottom: 8px;
+    font-size: 11px; color: var(--text-4);
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     按钮
+     ============================================================ */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 9px 18px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    font-size: 14px; font-family: inherit; font-weight: 500;
+    cursor: pointer;
+    background: var(--primary); color: #fff;
+    transition: all .16s ease;
+    white-space: nowrap;
+    position: relative;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--primary-hover);
+    box-shadow: 0 3px 10px rgba(29,93,184,.24);
+    transform: translateY(-1px);
+  }
+  .btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .btn.secondary {
+    background: #fff; border-color: var(--border-2); color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn.secondary:hover:not(:disabled) {
+    background: var(--bg); border-color: var(--text-3);
+    box-shadow: var(--shadow); color: var(--text);
+  }
+  .btn.success { background: var(--success); }
+  .btn.success:hover:not(:disabled) { background: #0A6649; box-shadow: 0 3px 10px rgba(14,124,90,.24); }
+  .btn.danger { background: var(--danger); }
+  .btn.danger:hover:not(:disabled) { background: #A03024; box-shadow: 0 3px 10px rgba(192,57,43,.24); }
+  .btn.ghost {
+    background: transparent; border-color: transparent;
+    color: var(--text-2);
+  }
+  .btn.ghost:hover:not(:disabled) { background: var(--bg); color: var(--text); box-shadow: none; }
+  .btn.small { padding: 6px 13px; font-size: 13px; }
+  .btn.block { width: 100%; }
+
+  /* 加载中的按钮 */
+  .btn.loading { color: transparent !important; pointer-events: none; }
+  .btn.loading::after {
+    content: ''; position: absolute;
+    width: 15px; height: 15px;
+    border: 2px solid rgba(255,255,255,.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .65s linear infinite;
+  }
+  .btn.secondary.loading::after, .btn.ghost.loading::after {
+    border-color: rgba(0,0,0,.15);
+    border-top-color: var(--text-2);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ============================================================
+     工具栏（搜索/筛选）
+     ============================================================ */
+  .toolbar {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-sm);
+  }
+  .search-row {
+    display: flex; gap: 10px; margin-bottom: 14px;
+  }
+  .search-box {
+    flex-grow: 1; position: relative;
+  }
+  .search-box input {
+    padding-left: 38px;
+    height: 42px;
+  }
+  .search-icon {
+    position: absolute; left: 13px; top: 50%;
+    transform: translateY(-50%);
+    width: 15px; height: 15px;
+    pointer-events: none;
+    opacity: .4;
+  }
+  .search-clear {
+    position: absolute; right: 10px; top: 50%;
+    transform: translateY(-50%);
+    width: 20px; height: 20px;
+    border: none; background: var(--text-4);
+    color: #fff; border-radius: 50%;
+    font-size: 13px; line-height: 1;
+    cursor: pointer; display: none;
+    place-items: center;
+    padding: 0;
+  }
+  .search-clear.show { display: grid; }
+
+  .chip-row {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .chip-row + .chip-row { margin-top: 10px; }
+  .chip-label {
+    font-size: 12px; color: var(--text-3);
+    margin-right: 2px; flex-shrink: 0;
+  }
+  .chip {
+    padding: 5px 13px;
+    border-radius: 20px;
+    border: 1px solid var(--border-2);
+    background: #fff;
+    font-size: 13px; font-family: inherit;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all .15s ease;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+  .chip.active {
+    background: var(--primary); border-color: var(--primary);
+    color: #fff; font-weight: 500;
+  }
+  .chip .count {
+    font-size: 11px; opacity: .65;
+  }
+  .chip.active .count { opacity: .85; }
+
+  .result-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 14px;
+    font-size: 13px; color: var(--text-2);
+    flex-wrap: wrap;
+  }
+  .result-count b { color: var(--text); font-weight: 600; }
+
+  /* ============================================================
+     商品网格
+     ============================================================ */
+  .items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+    gap: 16px;
+  }
+
+  .item-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    box-shadow: var(--shadow-sm);
+    transition: all .2s ease;
+    animation: cardIn .3s ease backwards;
+  }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .item-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-3px);
+    border-color: var(--border-2);
+  }
+
+  .item-banner {
+    height: 108px;
+    display: grid; place-items: center;
+    font-size: 38px;
+    position: relative;
+    background: linear-gradient(135deg, #EEF3FB 0%, #F7F9FC 100%);
+    border-bottom: 1px solid var(--border);
+  }
+  .item-banner.c-数码电子 { background: linear-gradient(135deg, #E8F1FD 0%, #F6FAFF 100%); }
+  .item-banner.c-图书教材 { background: linear-gradient(135deg, #EDF9F3 0%, #F7FCFA 100%); }
+  .item-banner.c-生活用品 { background: linear-gradient(135deg, #FEF6E9 0%, #FFFDF8 100%); }
+  .item-banner.c-运动户外 { background: linear-gradient(135deg, #F0EEFE 0%, #F9F8FF 100%); }
+  .item-banner.c-服饰鞋包 { background: linear-gradient(135deg, #FDEEF4 0%, #FFF8FB 100%); }
+  .item-banner.c-其他     { background: linear-gradient(135deg, #F1F3F6 0%, #FAFBFC 100%); }
+
+  .status-tag {
+    position: absolute; top: 10px; right: 10px;
+    font-size: 11px; font-weight: 500;
+    padding: 3px 10px; border-radius: 20px;
+    backdrop-filter: blur(8px);
+    border: 1px solid;
+  }
+  .status-tag.s0 { background: rgba(230,246,240,.92); color: var(--success); border-color: var(--success-border); }
+  .status-tag.s1 { background: rgba(253,246,227,.92); color: var(--warning); border-color: var(--warning-border); }
+  .status-tag.s2 { background: rgba(240,237,254,.92); color: var(--purple);  border-color: var(--purple-border); }
+  .status-tag.s3 { background: rgba(245,246,248,.92); color: var(--text-3);  border-color: var(--border-2); }
+
+  .cat-tag {
+    position: absolute; top: 10px; left: 10px;
+    font-size: 11px;
+    padding: 3px 9px; border-radius: 6px;
+    background: rgba(255,255,255,.85);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(6px);
+    font-weight: 500;
+  }
+
+  .item-body { padding: 14px; display: flex; flex-direction: column; flex-grow: 1; }
+  .item-name {
+    font-size: 14px; font-weight: 600;
+    line-height: 1.45;
+    margin-bottom: 6px;
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+    min-height: 40px;
+  }
+  .item-desc {
+    font-size: 12.5px; color: var(--text-2);
+    line-height: 1.55;
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+    margin-bottom: 12px;
+    min-height: 39px;
+  }
+  .item-price-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 8px; margin-bottom: 12px;
+  }
+  .item-price {
+    font-size: 19px; font-weight: 600;
+    color: var(--primary);
+    letter-spacing: -.02em;
+    line-height: 1.2;
+  }
+  .item-price small { font-size: 12px; font-weight: 500; margin-left: 2px; }
+  .item-time { font-size: 11px; color: var(--text-4); }
+
+  .seller-row {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 10px;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+    font-size: 12px;
+  }
+  .seller-dot {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--primary-light); color: var(--primary);
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .seller-name { color: var(--text-2); font-weight: 500; }
+  .seller-deal { color: var(--text-4); font-size: 11px; }
+
+  .item-actions {
+    display: flex; gap: 8px; margin-top: auto;
+  }
+  .item-actions .btn { flex: 1; }
+
+  .flow-hint {
+    font-size: 11.5px; color: var(--warning);
+    background: var(--warning-light);
+    border: 1px solid var(--warning-border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    text-align: center;
+    font-weight: 500;
+  }
+
+  /* ============================================================
+     骨架屏
+     ============================================================ */
+  .skeleton-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .sk {
+    background: linear-gradient(90deg, #EFF1F4 25%, #F8F9FB 50%, #EFF1F4 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: -200% 0; }
+  }
+  .sk-banner { height: 108px; }
+  .sk-body { padding: 14px; }
+  .sk-line { height: 12px; border-radius: 5px; margin-bottom: 9px; }
+  .sk-line.w60 { width: 60%; }
+  .sk-line.w70 { width: 70%; }
+  .sk-line.w80 { width: 80%; }
+  .sk-line.w45 { width: 45%; }
+  .sk-line.w90 { width: 90%; }
+  .sk-btn { height: 34px; border-radius: var(--radius-sm); margin-top: 14px; }
+  .skeleton-metric { min-height: 96px; }
+
+  /* ============================================================
+     分页
+     ============================================================ */
+  .pager {
+    display: flex; align-items: center; justify-content: center;
+    gap: 6px; margin-top: 26px; flex-wrap: wrap;
+  }
+  .pager button {
+    min-width: 34px; height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border-2);
+    background: #fff; border-radius: var(--radius-sm);
+    font-size: 13px; font-family: inherit;
+    color: var(--text-2); cursor: pointer;
+    transition: all .15s ease;
+  }
+  .pager button:hover:not(:disabled):not(.active) {
+    border-color: var(--primary); color: var(--primary);
+  }
+  .pager button.active {
+    background: var(--primary); border-color: var(--primary);
+    color: #fff; font-weight: 500;
+  }
+  .pager button:disabled { opacity: .4; cursor: not-allowed; }
+  .pager .ellipsis { color: var(--text-4); padding: 0 4px; }
+
+  /* ============================================================
+     表格
+     ============================================================ */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-2); font-weight: 500;
+    white-space: nowrap;
+    background: var(--bg);
+    font-size: 12px;
+  }
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #F0F2F5;
+    vertical-align: middle;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr { transition: background .12s; }
+  tbody tr:hover { background: #FAFBFC; }
+  .mono {
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 12px; color: var(--text-2);
+  }
+
+  /* ============================================================
+     流程步骤条
+     ============================================================ */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .step {
+    position: relative;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px;
+    transition: all .2s ease;
+  }
+  .step:hover { border-color: var(--primary-border); background: var(--primary-light); }
+  .step-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--primary); color: #fff;
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 600;
+    margin-bottom: 9px;
+  }
+  .step-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .step-desc { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+  .step-arrow {
+    position: absolute; right: -7px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-4); font-size: 13px;
+    z-index: 1;
+  }
+  @media (max-width: 720px) { .step-arrow { display: none; } }
+
+  /* ============================================================
+     统计卡片
+     ============================================================ */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .stat-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 15px;
+    transition: all .18s ease;
+  }
+  .stat-box:hover { border-color: var(--border-2); box-shadow: var(--shadow-sm); }
+  .stat-label { font-size: 11.5px; color: var(--text-3); margin-bottom: 5px; font-weight: 500; }
+  .stat-value {
+    font-size: 19px; font-weight: 600;
+    letter-spacing: -.02em; line-height: 1.25;
+  }
+  .stat-value.sm { font-size: 13px; font-family: ui-monospace, Consolas, monospace; }
+
+  /* ============================================================
+     发布表单
+     ============================================================ */
+  .publish-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .publish-grid { grid-template-columns: 1fr; } }
+
+  .cat-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+  .cat-picker .chip { padding: 7px 14px; }
+
+  .preview-box {
+    background: var(--bg);
+    border: 1px dashed var(--border-2);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .preview-title {
+    font-size: 12px; color: var(--text-3);
+    margin-bottom: 12px; font-weight: 500;
+  }
+
+  .tips {
+    background: var(--primary-light);
+    border: 1px solid var(--primary-border);
+    border-radius: var(--radius-sm);
+    padding: 13px 15px;
+    font-size: 12.5px;
+    color: var(--text-2);
+    line-height: 1.75;
+  }
+  .tips b { color: var(--primary); font-weight: 600; }
+  .tips ul { margin: 6px 0 0 16px; }
+  .tips li { margin-bottom: 3px; }
+
+  /* ============================================================
+     提示条 / 空状态 / 通知
+     ============================================================ */
+  .empty {
+    text-align: center;
+    padding: 64px 20px;
+    color: var(--text-3);
+  }
+  .empty-icon {
+    width: 56px; height: 56px; margin: 0 auto 16px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: grid; place-items: center;
+    font-size: 24px; opacity: .5;
+  }
+  .empty-title { font-size: 14px; font-weight: 500; color: var(--text-2); margin-bottom: 5px; }
+  .empty-desc { font-size: 12.5px; margin-bottom: 18px; }
+
+  .toast-wrap {
+    position: fixed; top: 76px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex; flex-direction: column; gap: 8px;
+    align-items: center;
+    pointer-events: none;
+    width: min(92vw, 480px);
+  }
+  .toast {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: #fff;
+    border: 1px solid var(--border-2);
+    border-left: 3px solid var(--text-3);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    font-size: 13.5px;
+    box-shadow: var(--shadow-lg);
+    animation: toastIn .26s cubic-bezier(.34,1.4,.64,1);
+    width: 100%;
+    pointer-events: auto;
+  }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(-14px) scale(.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .toast.out { animation: toastOut .2s ease forwards; }
+  @keyframes toastOut {
+    to { opacity: 0; transform: translateY(-10px) scale(.97); }
+  }
+  .toast.success { border-left-color: var(--success); }
+  .toast.error   { border-left-color: var(--danger); }
+  .toast.info    { border-left-color: var(--primary); }
+  .toast-icon {
+    width: 18px; height: 18px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 11px; color: #fff;
+    flex-shrink: 0; margin-top: 1px; font-weight: 700;
+  }
+  .toast.success .toast-icon { background: var(--success); }
+  .toast.error   .toast-icon { background: var(--danger); }
+  .toast.info    .toast-icon { background: var(--primary); }
+  .toast-msg { flex-grow: 1; color: var(--text); line-height: 1.5; }
+
+  /* ============================================================
+     模态确认框
+     ============================================================ */
+  .modal-mask {
+    position: fixed; inset: 0;
+    background: rgba(16,24,40,.45);
+    backdrop-filter: blur(3px);
+    z-index: 900;
+    display: grid; place-items: center;
+    padding: 20px;
+    animation: maskIn .2s ease;
+  }
+  @keyframes maskIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal {
+    background: #fff;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    width: min(100%, 420px);
+    padding: 24px;
+    animation: modalIn .26s cubic-bezier(.34,1.3,.64,1);
+  }
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(.94) translateY(10px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .modal-icon {
+    width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 20px; margin-bottom: 14px;
+  }
+  .modal-icon.warn { background: var(--warning-light); }
+  .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .modal-text {
+    font-size: 13.5px; color: var(--text-2);
+    line-height: 1.7; margin-bottom: 20px;
+  }
+  .modal-detail {
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    padding: 13px 15px;
+    margin-bottom: 20px;
+    font-size: 13px;
+  }
+  .modal-detail-row {
+    display: flex; justify-content: space-between;
+    gap: 12px; padding: 4px 0;
+  }
+  .modal-detail-row span:first-child { color: var(--text-3); }
+  .modal-detail-row span:last-child { font-weight: 500; }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-actions .btn { flex: 1; }
+
+  /* ============================================================
+     评分选择
+     ============================================================ */
+  .star-picker {
+    display: flex; gap: 6px; justify-content: center;
+    margin: 8px 0 20px;
+  }
+  .star-picker button {
+    background: none; border: none; cursor: pointer;
+    font-size: 30px; line-height: 1;
+    color: var(--border-2);
+    transition: all .15s ease;
+    padding: 2px;
+  }
+  .star-picker button:hover { transform: scale(1.15); }
+  .star-picker button.on { color: #F5A623; }
+
+  .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+  /* ============================================================
+     图片上传
+     ============================================================ */
+  .upload-zone {
+    border: 1.5px dashed var(--border-2);
+    border-radius: var(--radius);
+    background: var(--bg);
+    cursor: pointer;
+    transition: all .18s ease;
+    overflow: hidden;
+  }
+  .upload-zone:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+  }
+  .upload-empty {
+    padding: 28px 20px;
+    text-align: center;
+  }
+  .upload-icon { font-size: 30px; margin-bottom: 8px; }
+  .upload-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+  .upload-hint { font-size: 12px; color: var(--text-3); line-height: 1.7; }
+
+  .upload-filled {
+    display: flex; gap: 14px; padding: 14px;
+    align-items: flex-start;
+  }
+  .upload-filled img {
+    width: 96px; height: 96px; object-fit: cover;
+    border-radius: var(--radius-sm); flex-shrink: 0;
+    border: 1px solid var(--border);
+  }
+  .upload-info { flex: 1; min-width: 0; }
+  .upload-hash-label { font-size: 11.5px; color: var(--text-3); margin-bottom: 3px; }
+  .upload-hash {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11px; color: var(--purple);
+    background: var(--purple-light);
+    border: 1px solid var(--purple-border);
+    border-radius: 6px; padding: 5px 8px;
+    word-break: break-all; line-height: 1.5;
+  }
+  .upload-meta { font-size: 11.5px; color: var(--text-3); margin-top: 6px; }
+
+  /* ============================================================
+     商品卡片图片
+     ============================================================ */
+  .item-thumb {
+    position: relative;
+    width: 100%; aspect-ratio: 4 / 3;
+    overflow: hidden; background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .item-thumb img {
+    width: 100%; height: 100%; object-fit: cover;
+    display: block;
+    transition: transform .35s cubic-bezier(.34,1.1,.64,1);
+  }
+  .item-card:hover .item-thumb img { transform: scale(1.06); }
+  .item-thumb .thumb-badges {
+    position: absolute; top: 9px; right: 9px;
+    display: flex; gap: 5px;
+  }
+  .hash-chip {
+    position: absolute; bottom: 8px; left: 9px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 10px;
+    background: rgba(26,29,33,.72);
+    color: #fff;
+    border-radius: 5px; padding: 2px 7px;
+    backdrop-filter: blur(4px);
+    letter-spacing: .2px;
+  }
+  .item-main-link { cursor: pointer; }
+  .item-main-link:hover .item-name { color: var(--primary); }
+
+  /* ============================================================
+     数据看板
+     ============================================================ */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+    gap: 12px; margin-bottom: 18px;
+  }
+  .metric-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 15px 16px;
+    box-shadow: var(--shadow-sm);
+    transition: all .2s ease;
+  }
+  .metric-card:hover {
+    box-shadow: var(--shadow); transform: translateY(-2px);
+  }
+  .metric-head {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-3); margin-bottom: 8px;
+  }
+  .metric-icon { font-size: 14px; }
+  .metric-value {
+    font-size: 24px; font-weight: 650;
+    letter-spacing: -.4px; line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+  }
+  .metric-value .unit {
+    font-size: 12.5px; color: var(--text-3);
+    font-weight: 400; margin-left: 3px;
+  }
+  .metric-sub { font-size: 11.5px; color: var(--text-3); margin-top: 5px; }
+  .metric-card.accent { border-color: var(--primary-border); background: linear-gradient(180deg,var(--primary-light) 0%, #fff 62%); }
+  .metric-card.accent .metric-value { color: var(--primary); }
+  .metric-card.lock { border-color: var(--warning-border); background: linear-gradient(180deg,var(--warning-light) 0%, #fff 62%); }
+  .metric-card.lock .metric-value { color: var(--warning); }
+
+  .board-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+  .board-card-wide { grid-column: 1 / -1; }
+  .chart-box { position: relative; height: 260px; margin-top: 6px; }
+  .chart-box-sm { height: 210px; }
+  .chart-note {
+    font-size: 11.5px; color: var(--text-3);
+    margin-top: 12px; line-height: 1.6;
+  }
+
+  /* ============================================================
+     商品详情弹窗 & 交易时间线
+     ============================================================ */
+  .detail-modal {
+    width: min(96vw, 880px);
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .detail-close {
+    position: absolute; top: 14px; right: 14px;
+    width: 32px; height: 32px; border-radius: 50%;
+    border: none; cursor: pointer;
+    background: rgba(255,255,255,.9);
+    color: var(--text-2); font-size: 18px; line-height: 1;
+    display: grid; place-items: center;
+    box-shadow: var(--shadow-sm); z-index: 5;
+    transition: all .15s ease;
+  }
+  .detail-close:hover { background: #fff; color: var(--text); transform: scale(1.08); }
+  .detail-hero { position: relative; }
+  .detail-hero img {
+    width: 100%; max-height: 340px;
+    object-fit: cover; display: block;
+  }
+  .detail-hero-empty {
+    height: 130px;
+    background: linear-gradient(135deg, var(--primary-light) 0%, var(--purple-light) 100%);
+    display: grid; place-items: center;
+    font-size: 44px;
+  }
+  .detail-body { padding: 22px 24px 24px; }
+  .detail-head {
+    display: flex; align-items: flex-start;
+    justify-content: space-between; gap: 16px;
+    margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .detail-name { font-size: 20px; font-weight: 650; letter-spacing: -.3px; }
+  .detail-price {
+    font-size: 26px; font-weight: 700; color: var(--primary);
+    white-space: nowrap; line-height: 1.1;
+  }
+  .detail-price small { font-size: 13px; font-weight: 500; color: var(--text-3); margin-left: 4px; }
+  .detail-meta-row {
+    display: flex; flex-wrap: wrap; gap: 8px 18px;
+    font-size: 12.5px; color: var(--text-2);
+    padding: 11px 0; border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .detail-desc {
+    font-size: 13.5px; line-height: 1.8; color: var(--text-2);
+    white-space: pre-wrap; margin-bottom: 18px;
+  }
+
+  .hash-panel {
+    background: var(--purple-light);
+    border: 1px solid var(--purple-border);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px; margin-bottom: 18px;
+  }
+  .hash-panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 7px; flex-wrap: wrap;
+  }
+  .hash-panel-title { font-size: 12.5px; font-weight: 600; color: var(--purple); }
+  .hash-value {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px; color: var(--text-2);
+    word-break: break-all; line-height: 1.6;
+    background: #fff; border-radius: 6px; padding: 7px 9px;
+  }
+  .verify-ok, .verify-bad {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 20px;
+    font-weight: 500;
+  }
+  .verify-ok  { background: var(--success-light); color: var(--success); }
+  .verify-bad { background: var(--danger-light);  color: var(--danger); }
+
+  /* 时间线 */
+  .timeline { position: relative; padding-left: 27px; margin-top: 6px; }
+  .timeline::before {
+    content: ''; position: absolute;
+    left: 9px; top: 6px; bottom: 6px;
+    width: 2px; background: var(--border);
+  }
+  .tl-step { position: relative; padding-bottom: 17px; }
+  .tl-step:last-child { padding-bottom: 0; }
+  .tl-dot {
+    position: absolute; left: -25px; top: 1px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #fff; border: 2px solid var(--border-2);
+    display: grid; place-items: center;
+    font-size: 10px; z-index: 2;
+  }
+  .tl-step.t-listed    .tl-dot { border-color: var(--primary);  background: var(--primary-light); }
+  .tl-step.t-purchased .tl-dot { border-color: var(--warning);  background: var(--warning-light); }
+  .tl-step.t-delivered .tl-dot { border-color: var(--success);  background: var(--success-light); }
+  .tl-step.t-removed   .tl-dot { border-color: var(--text-4);   background: var(--bg); }
+  .tl-step.t-rated     .tl-dot { border-color: #F5A623;         background: var(--warning-light); }
+  .tl-title { font-size: 13.5px; font-weight: 600; margin-bottom: 2px; }
+  .tl-detail { font-size: 12.5px; color: var(--text-2); line-height: 1.65; }
+  .tl-meta {
+    font-size: 11px; color: var(--text-3); margin-top: 3px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .tl-mono { font-family: ui-monospace, Consolas, monospace; }
+
+  .detail-actions {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    padding-top: 18px; border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+  .detail-actions .btn { flex: 1; min-width: 130px; }
+
+  .detail-section-title {
+    font-size: 14px; font-weight: 600;
+    margin: 22px 0 4px; padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+
+  /* ============================================================
+     响应式
+     ============================================================ */
+  @media (max-width: 860px) {
+    .header-inner { gap: 14px; padding: 0 16px; }
+    .logo-sub { display: none; }
+    nav button { padding: 7px 10px; font-size: 13px; }
+    .chain-status .block-badge { display: none; }
+    main { padding: 18px 16px 48px; }
+    .page-title { font-size: 18px; }
+    .items-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .login-bar { flex-wrap: wrap; }
+    .auth-card { padding: 18px 16px; }
+    .board-grid { grid-template-columns: 1fr; }
+    .metrics-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  }
+  @media (max-width: 620px) {
+    nav { display: none; }
+    .items-grid { grid-template-columns: 1fr; }
+    .search-row { flex-direction: column; }
+    .modal { padding: 20px; }
+    .detail-modal { padding: 0; width: 96vw; }
+    .detail-body { padding: 18px 16px 20px; }
+    .detail-name { font-size: 17px; }
+    .detail-price { font-size: 22px; }
+    .metric-value { font-size: 20px; }
+    .chart-box { height: 220px; }
+    .auth-actions { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<h2 class="sr-only">链易——基于区块链的二手交易平台，支持担保交易、资金托管与信誉评价</h2>
+
+<header>
+  <div class="header-inner">
+    <div class="logo" onclick="switchView('market')">
+      <span class="logo-mark">链</span>
+      <span>链易<span class="logo-sub">区块链二手交易</span></span>
+    </div>
+    <nav id="mainNav">
+      <button class="active" data-view="market"  onclick="switchView('market', this)">商品市场</button>
+      <button data-view="publish" onclick="switchView('publish', this)">发布商品</button>
+      <button data-view="orders"  onclick="switchView('orders', this)">我的交易</button>
+      <button data-view="board"   onclick="switchView('board', this)">数据看板</button>
+      <button data-view="chain"   onclick="switchView('chain', this)">区块链浏览</button>
+    </nav>
+    <div class="chain-status">
+      <span class="status-pill" id="statusPill">
+        <span class="dot"></span><span id="statusText">连接中</span>
+      </span>
+      <span class="block-badge" id="blockNum">区块 -</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ================= 登录 / 注册 ================= -->
+  <div class="auth-card" id="authCard">
+    <div class="auth-head">
+      <div class="auth-icon">🔐</div>
+      <div>
+        <div class="auth-title" id="authTitle">登录链易</div>
+        <div class="auth-sub" id="authSub">密码经 scrypt 加盐哈希存储，令牌 2 小时自动过期</div>
+      </div>
+    </div>
+
+    <div class="auth-form">
+      <div class="field" style="margin-bottom:14px">
+        <label>用户名</label>
+        <input type="text" id="loginName" placeholder="中文/字母/数字/下划线，最长12位" maxlength="12"
+               autocomplete="username"
+               onkeydown="if(event.key==='Enter')submitAuth()">
+        <div class="field-tip" id="nameTip"></div>
+      </div>
+
+      <div class="field" style="margin-bottom:14px">
+        <label>密码</label>
+        <div class="pwd-wrap">
+          <input type="password" id="loginPassword" placeholder="至少 6 位，不能全是数字"
+                 autocomplete="current-password"
+                 onkeydown="if(event.key==='Enter')submitAuth()">
+          <button type="button" class="pwd-toggle" onclick="togglePwd(this)" title="显示/隐藏密码">👁</button>
+        </div>
+        <div class="field-tip" id="pwdTip"></div>
+      </div>
+
+      <div class="field" id="nicknameField" style="display:none;margin-bottom:14px">
+        <label>昵称<span style="color:var(--text-3);font-weight:400">（可选，默认与用户名相同）</span></label>
+        <input type="text" id="regNickname" placeholder="别人看到的名字" maxlength="20"
+               onkeydown="if(event.key==='Enter')submitAuth()">
+      </div>
+
+      <div class="auth-strength" id="strengthBox" style="display:none">
+        <div class="strength-bars">
+          <span class="sb"></span><span class="sb"></span><span class="sb"></span>
+        </div>
+        <span class="strength-text" id="strengthText">密码强度</span>
+      </div>
+
+      <div class="auth-msg" id="authMsg"></div>
+
+      <div class="auth-actions">
+        <button class="btn" id="authSubmit" onclick="submitAuth(this)" style="flex:1">
+          登录
+        </button>
+        <button class="btn ghost" id="authSwitch" onclick="switchAuthMode()">注册新账号</button>
+      </div>
+    </div>
+
+    <div class="auth-note">
+      <span>💡 演示提示：本平台密码只存在后端内存，重启后需重新注册</span>
+    </div>
+  </div>
+
+  <!-- ================= 商品市场 ================= -->
+  <section id="view-market" class="view active">
+    <div class="page-head">
+      <div class="page-title">商品市场</div>
+      <div class="page-desc">所有商品信息都记录在区块链上，不可篡改。付款先进入合约托管，确认收货后才放款给卖家。</div>
+    </div>
+
+    <!-- 担保流程说明 -->
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-title">担保交易如何保护你</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-title">卖家上架</div>
+          <div class="step-desc">商品信息写入链上，任何人无法篡改</div>
+          <span class="step-arrow">›</span>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-title">买家下单</div>
+          <div class="step-desc">货款进入合约锁定，<b>卖家拿不到</b></div>
+          <span class="step-arrow">›</span>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-title">确认收货</div>
+          <div class="step-desc">买家核验商品没问题后点击</div>
+          <span class="step-arrow">›</span>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-title">自动放款</div>
+          <div class="step-desc">合约自动转给卖家，扣 1% 平台费</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <div class="search-row">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="9" cy="9" r="6"/><path d="M14 14l4 4" stroke-linecap="round"/>
+          </svg>
+          <input type="text" id="searchInput" placeholder="搜索商品名称、描述或分类…"
+                 oninput="onSearchInput(this)" onkeydown="if(event.key==='Enter'){applySearch();}">
+          <button class="search-clear" id="searchClear" onclick="clearSearch()" title="清空">×</button>
+        </div>
+        <select id="sortSelect" onchange="applySearch()" style="width:150px;height:42px">
+          <option value="newest">最新发布</option>
+          <option value="price_asc">价格从低到高</option>
+          <option value="price_desc">价格从高到低</option>
+          <option value="hot">信誉优先</option>
+        </select>
+      </div>
+
+      <div class="chip-row" id="catChips"></div>
+
+      <div class="chip-row">
+        <span class="chip-label">状态</span>
+        <button class="chip active" data-status="" onclick="setStatus('', this)">全部</button>
+        <button class="chip" data-status="0" onclick="setStatus('0', this)">在售中</button>
+        <button class="chip" data-status="1" onclick="setStatus('1', this)">交易中</button>
+        <button class="chip" data-status="2" onclick="setStatus('2', this)">已售出</button>
+      </div>
+    </div>
+
+    <div class="result-bar">
+      <div class="result-count" id="resultCount">加载中…</div>
+      <button class="btn ghost small" onclick="loadItems()">刷新</button>
+    </div>
+
+    <div id="itemsGrid" class="items-grid"></div>
+    <div id="pager" class="pager"></div>
+  </section>
+
+  <!-- ================= 发布商品 ================= -->
+  <section id="view-publish" class="view">
+    <div class="page-head">
+      <div class="page-title">发布商品</div>
+      <div class="page-desc">填写商品信息，上架后将永久记录在区块链上，无法修改或删除。</div>
+    </div>
+
+    <div class="publish-grid">
+      <div class="card">
+        <div class="card-title">商品信息</div>
+
+        <div class="field">
+          <label>商品名称<span class="req">*</span></label>
+          <div class="input-wrap">
+            <input type="text" id="pubName" placeholder="例如：索尼 WH-1000XM4 降噪耳机"
+                   maxlength="50" oninput="updateCharCount('pubName','nameCount',50); syncPreview();">
+            <span class="char-count" id="nameCount">0/50</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>商品分类<span class="req">*</span></label>
+          <div class="cat-picker" id="catPicker"></div>
+        </div>
+
+        <div class="field">
+          <label>商品图片<span style="color:var(--text-3);font-weight:400">（可选）</span></label>
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('pubImage').click()">
+            <input type="file" id="pubImage" accept="image/*" hidden onchange="onImagePick(this)">
+            <div class="upload-empty" id="uploadEmpty">
+              <div class="upload-icon">🖼</div>
+              <div class="upload-title">点击选择图片</div>
+              <div class="upload-hint">jpg / png / gif / webp，最大 5MB<br>
+                <span style="color:var(--purple)">上传后按内容哈希（SHA-256）寻址存储</span>
+              </div>
+            </div>
+            <div class="upload-filled" id="uploadFilled" style="display:none">
+              <img id="uploadPreview" alt="预览">
+              <div class="upload-info">
+                <div class="upload-hash-label">内容哈希（写入链上）</div>
+                <div class="upload-hash mono" id="uploadHash"></div>
+                <div class="upload-meta" id="uploadMeta"></div>
+                <button type="button" class="btn ghost small" style="margin-top:8px"
+                        onclick="event.stopPropagation(); clearImage()">移除图片</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>商品描述</label>
+          <div class="input-wrap">
+            <textarea id="pubDesc" placeholder="成色、购买时间、有无配件、瑕疵说明等，写清楚更容易卖出去"
+                      maxlength="300" oninput="updateCharCount('pubDesc','descCount',300); syncPreview();"></textarea>
+            <span class="char-count" id="descCount">0/300</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>价格（ETH）<span class="req">*</span></label>
+          <input type="number" id="pubPrice" step="0.001" min="0.001"
+                 placeholder="0.5" oninput="syncPreview()">
+          <div style="font-size:12px;color:var(--text-3);margin-top:6px">
+            这是本地测试链的测试币，没有真实价值，可以随意填写
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field" style="margin-bottom:0">
+          <label>发布账户</label>
+          <div id="pubAccount" style="font-size:13px;color:var(--text-2)">请先登录</div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:20px">
+          <button class="btn" id="pubBtn" onclick="doPublish(this)" style="flex:1">确认上架到区块链</button>
+          <button class="btn secondary" onclick="resetPublishForm()">清空</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">实时预览</div>
+          <div class="preview-box">
+            <div class="preview-title">买家将看到的样子</div>
+            <div id="previewContent">
+              <div style="text-align:center;color:var(--text-4);font-size:12.5px;padding:24px 0">
+                填写商品信息后显示预览
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">上架须知</div>
+          <div class="tips">
+            <b>上链后不可修改</b>
+            <ul>
+              <li>商品名称、描述、价格一旦写入区块链，任何人都无法更改</li>
+              <li>上架会消耗少量测试币作为 Gas 费</li>
+              <li>在售商品可以下架，但已成交的记录会永久保留</li>
+              <li>交易成功后平台收取 1% 手续费</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">图片是怎么存的？</div>
+          <div class="tips">
+            <b>内容寻址，一处改动全盘暴露</b>
+            <ul>
+              <li>图片本身存在服务器，<b>文件名 = 图片内容的 SHA-256 哈希</b></li>
+              <li>这个哈希会跟着商品一起写进区块链</li>
+              <li>正因为文件名由内容算出，任何人改动图片一个字节，哈希就会完全不同</li>
+              <li>详情页可以随时「校验」，重新算一遍哈希和链上比对</li>
+              <li>这套机制就是 IPFS 的核心原理，区别只是 IPFS 还会把文件分发到全球节点</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 我的交易 ================= -->
+  <section id="view-orders" class="view">
+    <div class="page-head">
+      <div class="page-title">我的交易</div>
+      <div class="page-desc">你发布的和你购买的商品，以及需要处理的待办事项。</div>
+    </div>
+
+    <div id="todoBox"></div>
+    <div id="myStats" class="card" style="margin-bottom:18px"></div>
+    <div id="myItems"></div>
+  </section>
+
+  <!-- ================= 数据看板 ================= -->
+  <section id="view-board" class="view">
+    <div class="page-head">
+      <div class="page-title">数据看板</div>
+      <div class="page-desc">所有数字都是从区块链上逐条读取后实时算出来的，没有单独存一份"统计表"。链上一变，看板立刻跟着变。</div>
+    </div>
+
+    <div class="metrics-grid" id="metricsGrid"></div>
+
+    <div class="board-grid">
+      <div class="card board-card-wide">
+        <div class="card-title">成交额趋势</div>
+        <div class="chart-box"><canvas id="trendChart"></canvas></div>
+        <div class="chart-note" id="trendNote"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">分类成交占比</div>
+        <div class="chart-box chart-box-sm"><canvas id="donutChart"></canvas></div>
+        <div class="chart-note" id="donutNote"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">价格区间分布</div>
+        <div class="chart-box chart-box-sm"><canvas id="barChart"></canvas></div>
+        <div class="chart-note">统计在售与已售出商品的价格分布</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 区块链浏览 ================= -->
+  <section id="view-chain" class="view">
+    <div class="page-head">
+      <div class="page-title">区块链浏览</div>
+      <div class="page-desc">链上真实发生的每一笔交易。每次操作都会产生一条不可篡改的记录。</div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-title">链状态</div>
+      <div class="stats-grid" id="chainStats"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">最近交易记录</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>区块</th>
+              <th>交易哈希</th>
+              <th>发送方</th>
+              <th style="text-align:right">金额 (ETH)</th>
+            </tr>
+          </thead>
+          <tbody id="txTable"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px">
+        <button class="btn secondary small" onclick="loadChain()">刷新</button>
+        <button class="btn ghost small" onclick="doReset()">重置整条链</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<div id="modalRoot"></div>
+
+<script src="chart.min.js"></script>
+<script>
+/* ============================================================
+   全局状态
+   ============================================================ */
+const API = '';
+
+const state = {
+  user: null,          // 当前用户名
+  info: null,          // 当前用户信息
+  items: [],           // 当前页商品
+  q: '',               // 搜索关键词
+  category: '全部',    // 分类
+  status: '',          // 状态筛选
+  sort: 'newest',      // 排序
+  page: 1,             // 页码
+  pageSize: 12,
+  totalPages: 1,
+  categories: [],
+  catCounts: {},
+  pubCategory: '数码电子',
+  pubImageHash: '',        // 已上传图片的内容哈希
+  pubImageUrl: '',
+  pubImageSize: 0,
+  searchTimer: null,
+  charts: {},              // 看板图表实例
+  token: null,             // 登录令牌（存 localStorage）
+  authMode: 'login',       // login | register
+};
+
+const CATEGORY_ICONS = {
+  '数码电子': '💻',
+  '图书教材': '📚',
+  '生活用品': '🏠',
+  '运动户外': '⚽',
+  '服饰鞋包': '👟',
+  '其他':     '📦',
+};
+
+/* ============================================================
+   工具
+   ============================================================ */
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function shortAddr(a) {
+  if (!a || a.length < 14) return a || '-';
+  return a.slice(0, 8) + '…' + a.slice(-6);
+}
+
+/* 统一请求封装：自动附加 token，自动处理登录失效 */
+async function api(path, opts) {
+  const options = Object.assign({}, opts || {});
+  const headers = Object.assign({}, options.headers || {});
+
+  // 带上登录令牌（服务端以它为准判断"你是谁"）
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  options.headers = headers;
+
+  try {
+    const res = await fetch(API + path, options);
+
+    // 服务端在 token 快过期时会回一个新 token
+    const renewed = res.headers.get('X-Renewed-Token');
+    if (renewed) {
+      state.token = renewed;
+      localStorage.setItem('ly_token', renewed);
+    }
+
+    // 401 → 登录失效，清掉本地状态
+    if (res.status === 401 && state.token) {
+      clearAuth();
+      if (document.getElementById('authCard')) {
+        authMsg('登录已过期，请重新登录', 'warn');
+      }
+    }
+
+    const data = await res.json().catch(() => ({ success: false, error: '服务器返回格式异常' }));
+    return data;
+  } catch (e) {
+    return { success: false, error: '无法连接到服务器，请确认后端服务正在运行' };
+  }
+}
+
+function post(path, body) {
+  return api(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+}
+
+/* ============================================================
+   通知
+   ============================================================ */
+const TOAST_ICONS = { success: '✓', error: '!', info: 'i' };
+
+function toast(msg, type = 'info', duration = 3200) {
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.innerHTML = `
+    <span class="toast-icon">${TOAST_ICONS[type] || 'i'}</span>
+    <span class="toast-msg">${esc(msg)}</span>
+  `;
+  wrap.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 220);
+  }, duration);
+}
+
+/* ============================================================
+   模态确认框
+   ============================================================ */
+function modal(opts) {
+  return new Promise(resolve => {
+    const root = document.getElementById('modalRoot');
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+
+    const details = (opts.details || []).map(d =>
+      `<div class="modal-detail-row"><span>${esc(d[0])}</span><span>${esc(d[1])}</span></div>`
+    ).join('');
+
+    mask.innerHTML = `
+      <div class="modal" role="dialog">
+        <div class="modal-icon warn">${opts.icon || '?'}</div>
+        <div class="modal-title">${esc(opts.title || '确认操作')}</div>
+        <div class="modal-text">${esc(opts.text || '')}</div>
+        ${details ? `<div class="modal-detail">${details}</div>` : ''}
+        <div class="modal-actions">
+          <button class="btn secondary" data-act="no">${esc(opts.cancelText || '取消')}</button>
+          <button class="btn ${opts.danger ? 'danger' : ''}" data-act="yes">${esc(opts.okText || '确定')}</button>
+        </div>
+      </div>
+    `;
+
+    const close = (val) => {
+      mask.style.animation = 'maskIn .16s ease reverse forwards';
+      setTimeout(() => { mask.remove(); resolve(val); }, 150);
+    };
+
+    mask.querySelector('[data-act=no]').onclick = () => close(false);
+    mask.querySelector('[data-act=yes]').onclick = () => close(true);
+    mask.onclick = (e) => { if (e.target === mask) close(false); };
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') { close(false); document.removeEventListener('keydown', onKey); }
+    });
+
+    root.appendChild(mask);
+  });
+}
+
+/* 星级选择器 */
+function starModal(title, text) {
+  return new Promise(resolve => {
+    const root = document.getElementById('modalRoot');
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    let score = 5;
+
+    const render = () => {
+      mask.querySelectorAll('.star-picker button').forEach((b, i) => {
+        b.classList.toggle('on', i < score);
+      });
+    };
+
+    mask.innerHTML = `
+      <div class="modal" role="dialog">
+        <div class="modal-icon warn" style="background:var(--warning-light)">★</div>
+        <div class="modal-title">${esc(title)}</div>
+        <div class="modal-text">${esc(text)}</div>
+        <div class="star-picker">
+          ${[1,2,3,4,5].map(n => `<button data-n="${n}" aria-label="${n}星">★</button>`).join('')}
+        </div>
+        <div class="modal-actions">
+          <button class="btn secondary" data-act="no">取消</button>
+          <button class="btn" data-act="yes">提交评价</button>
+        </div>
+      </div>
+    `;
+
+    mask.querySelectorAll('.star-picker button').forEach(b => {
+      b.onclick = () => { score = parseInt(b.dataset.n); render(); };
+      b.onmouseenter = () => {
+        mask.querySelectorAll('.star-picker button').forEach((x, i) => {
+          x.classList.toggle('on', i < parseInt(b.dataset.n));
+        });
+      };
+    });
+    const picker = mask.querySelector('.star-picker');
+    picker.onmouseleave = render;
+
+    const close = (val) => {
+      mask.style.animation = 'maskIn .16s ease reverse forwards';
+      setTimeout(() => { mask.remove(); resolve(val); }, 150);
+    };
+
+    mask.querySelector('[data-act=no]').onclick = () => close(null);
+    mask.querySelector('[data-act=yes]').onclick = () => close(score);
+    mask.onclick = (e) => { if (e.target === mask) close(null); };
+
+    root.appendChild(mask);
+    render();
+  });
+}
+
+/* 按钮加载态 */
+function btnLoading(btn, on) {
+  if (!btn) return;
+  btn.classList.toggle('loading', !!on);
+  btn.disabled = !!on;
+}
+
+/* ============================================================
+   视图切换
+   ============================================================ */
+function switchView(name, btn) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const view = document.getElementById('view-' + name);
+  if (view) view.classList.add('active');
+
+  document.querySelectorAll('#mainNav button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  else {
+    const b = document.querySelector(`#mainNav button[data-view="${name}"]`);
+    if (b) b.classList.add('active');
+  }
+
+  if (name === 'market')  loadItems();
+  if (name === 'orders')  loadMyOrders();
+  if (name === 'board')   loadDashboard();
+  if (name === 'chain')   loadChain();
+  if (name === 'publish') { renderCatPicker(); syncPreview(); }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ============================================================
+   登录 / 注册
+   ============================================================ */
+
+async function submitAuth(btn) {
+  const btnEl = btn || document.getElementById('authSubmit');
+  const username = document.getElementById('loginName').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const nickname = document.getElementById('regNickname').value.trim();
+
+  // ---- 前端预校验 ----
+  if (!username) {
+    authMsg('请输入用户名', 'error');
+    document.getElementById('loginName').focus();
+    return;
+  }
+  if (!/^[\w\u4e00-\u9fa5]{1,12}$/.test(username)) {
+    authMsg('用户名只能包含中文、字母、数字、下划线，最长 12 位', 'error');
+    return;
+  }
+  if (!password) {
+    authMsg('请输入密码', 'error');
+    document.getElementById('loginPassword').focus();
+    return;
+  }
+
+  btnLoading(btnEl, true);
+  authMsg('');
+
+  const isRegister = state.authMode === 'register';
+  const path = isRegister ? '/api/register' : '/api/login';
+  const payload = isRegister
+    ? { username, password, nickname: nickname || username }
+    : { username, password };
+
+  const r = await post(path, payload);
+  btnLoading(btnEl, false);
+
+  if (!r.success) {
+    authMsg(r.error || '操作失败', 'error');
+    // 密码错太多次 → 提示并禁用一段时间
+    if (r.code === 'LOCKED') {
+      startLockCountdown(r.retry_after || 60);
+    }
+    return;
+  }
+
+  // ---- 登录成功 ----
+  state.token = r.token;
+  state.user = r.username;
+  localStorage.setItem('ly_token', r.token);
+
+  authMsg(isRegister ? '注册成功，正在进入…' : '登录成功，正在进入…', 'ok');
+
+  await afterLogin();
+}
+
+/* 登录成功后的统一收尾 */
+async function afterLogin() {
+  const info = await api('/api/me');
+  if (!info.success) {
+    // token 失效了，退回登录界面
+    clearAuth();
+    authMsg(info.error || '登录状态异常，请重新登录', 'error');
+    return;
+  }
+  state.info = info;
+  renderUserBar();
+  syncPreview();
+  renderCatPicker();
+  loadItems();
+  checkStatus();
+}
+
+/* 切换 登录 / 注册 模式 */
+function switchAuthMode() {
+  state.authMode = state.authMode === 'login' ? 'register' : 'login';
+  const isReg = state.authMode === 'register';
+
+  document.getElementById('authTitle').textContent = isReg ? '注册新账号' : '登录链易';
+  document.getElementById('authSub').textContent = isReg
+    ? '密码会用 scrypt 加盐哈希后存储，服务端不保存明文'
+    : '密码经 scrypt 加盐哈希存储，令牌 2 小时自动过期';
+
+  document.getElementById('nicknameField').style.display = isReg ? '' : 'none';
+  document.getElementById('strengthBox').style.display = isReg ? 'flex' : 'none';
+  document.getElementById('authSubmit').textContent = isReg ? '注册并进入' : '登录';
+  document.getElementById('authSwitch').textContent = isReg ? '已有账号，去登录' : '注册新账号';
+  document.getElementById('loginPassword').setAttribute(
+    'autocomplete', isReg ? 'new-password' : 'current-password');
+
+  authMsg('');
+  updateStrength();
+}
+
+/* 显示/隐藏密码 */
+function togglePwd(btn) {
+  const inp = document.getElementById('loginPassword');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? '🙈' : '👁';
+}
+
+/* 密码强度实时提示 */
+function updateStrength() {
+  const pwd = document.getElementById('loginPassword').value;
+  const bars = document.querySelector('.strength-bars');
+  const text = document.getElementById('strengthText');
+  if (!bars || !text) return;
+
+  let level = 0;
+  if (pwd.length >= 6) level = 1;
+  if (pwd.length >= 8 && /[a-zA-Z]/.test(pwd) && /[0-9]/.test(pwd)) level = 2;
+  if (pwd.length >= 10 && /[a-zA-Z]/.test(pwd) && /[0-9]/.test(pwd) && /[^a-zA-Z0-9]/.test(pwd)) level = 3;
+
+  bars.className = 'strength-bars' + (level ? ' s' + level : '');
+  text.textContent = ['密码强度', '偏弱', '一般', '较强'][level];
+  text.style.color = ['', 'var(--danger)', 'var(--warning)', 'var(--success)'][level];
+}
+
+/* 登录框内的消息条 */
+function authMsg(msg, type) {
+  const el = document.getElementById('authMsg');
+  if (!el) return;
+  if (!msg) { el.className = 'auth-msg'; el.textContent = ''; return; }
+  el.className = 'auth-msg show ' + (type || 'error');
+  el.textContent = msg;
+}
+
+/* 锁定倒计时 */
+function startLockCountdown(seconds) {
+  const btn = document.getElementById('authSubmit');
+  let left = seconds;
+  btn.disabled = true;
+  const tick = () => {
+    if (left <= 0) { btn.disabled = false; btn.textContent = '登录'; return; }
+    btn.textContent = `请等待 ${left}s`;
+    left--;
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+/* 已登录：渲染顶部用户条 */
+function renderUserBar() {
+  const card = document.getElementById('authCard');
+  const it = state.info;
+  if (!card || !state.user || !it) return;
+
+  const star = it.avg_rating > 0
+    ? `<span class="star-badge">★ ${it.avg_rating}</span>`
+    : `<span style="font-size:12px;color:var(--text-3)">暂无评分</span>`;
+
+  card.className = 'login-bar';
+  card.style.maxWidth = '';
+  card.innerHTML = `
+    <div class="avatar">${esc(state.user.slice(0,1).toUpperCase())}</div>
+    <div class="login-text">
+      <div class="login-name">${esc(it.nickname || state.user)} ${star}
+        <span class="verified-badge">已登录</span>
+      </div>
+      <div class="login-meta">
+        <span>链上地址 <code>${shortAddr(it.address)}</code></span>
+        <span>余额 <b style="color:var(--primary)">${it.balance_eth}</b> ETH</span>
+        <span>卖出 ${it.sold_count} · 买入 ${it.bought_count}</span>
+      </div>
+    </div>
+    <button class="btn secondary small" onclick="doLogout(this)">安全退出</button>
+  `;
+}
+
+/* 登出：通知服务端作废 token，并清空本地 */
+async function doLogout(btn) {
+  if (btn) btnLoading(btn, true);
+  await post('/api/logout');
+  clearAuth();
+  location.reload();
+}
+
+function clearAuth() {
+  state.token = null;
+  state.user = null;
+  state.info = null;
+  localStorage.removeItem('ly_token');
+}
+
+/* 页面加载时用本地 token 恢复登录态 */
+async function restoreSession() {
+  const token = localStorage.getItem('ly_token');
+  if (!token) return false;
+
+  state.token = token;
+  const info = await api('/api/me');
+  if (!info.success) {
+    clearAuth();
+    return false;
+  }
+
+  state.user = info.username;
+  state.info = info;
+  renderUserBar();
+  return true;
+}
+
+/* ============================================================
+   商品市场：搜索 / 筛选 / 排序 / 分页
+   ============================================================ */
+function onSearchInput(el) {
+  const clr = document.getElementById('searchClear');
+  clr.classList.toggle('show', el.value.length > 0);
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => {
+    state.q = el.value.trim();
+    state.page = 1;
+    loadItems();
+  }, 320);
+}
+
+function clearSearch() {
+  const el = document.getElementById('searchInput');
+  el.value = '';
+  document.getElementById('searchClear').classList.remove('show');
+  state.q = '';
+  state.page = 1;
+  loadItems();
+  el.focus();
+}
+
+function applySearch() {
+  const el = document.getElementById('searchInput');
+  state.q = el.value.trim();
+  state.sort = document.getElementById('sortSelect').value;
+  state.page = 1;
+  loadItems();
+}
+
+function setCategory(cat, btn) {
+  state.category = cat;
+  state.page = 1;
+  document.querySelectorAll('#catChips .chip').forEach(c => c.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  loadItems();
+}
+
+function setStatus(st, btn) {
+  state.status = st;
+  state.page = 1;
+  document.querySelectorAll('[data-status]').forEach(c => c.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  loadItems();
+}
+
+function goPage(p) {
+  if (p < 1 || p > state.totalPages) return;
+  state.page = p;
+  loadItems();
+  window.scrollTo({ top: 180, behavior: 'smooth' });
+}
+
+function renderCatPicker() {
+  // 顶部筛选 chips
+  const chips = document.getElementById('catChips');
+  if (chips) {
+    const cats = state.categories.length ? state.categories
+      : ['数码电子','图书教材','生活用品','运动户外','服饰鞋包','其他'];
+    chips.innerHTML = `
+      <span class="chip-label">分类</span>
+      <button class="chip ${state.category === '全部' ? 'active' : ''}"
+              onclick="setCategory('全部', this)">全部</button>
+      ${cats.map(c => `
+        <button class="chip ${state.category === c ? 'active' : ''}" onclick="setCategory('${esc(c)}', this)">
+          ${CATEGORY_ICONS[c] || ''} ${esc(c)}
+          ${state.catCounts[c] ? `<span class="count">${state.catCounts[c]}</span>` : ''}
+        </button>
+      `).join('')}
+    `;
+  }
+
+  // 发布页分类选择
+  const picker = document.getElementById('catPicker');
+  if (picker) {
+    const cats = state.categories.length ? state.categories
+      : ['数码电子','图书教材','生活用品','运动户外','服饰鞋包','其他'];
+    picker.innerHTML = cats.map(c => `
+      <button class="chip ${state.pubCategory === c ? 'active' : ''}" onclick="setPubCategory('${esc(c)}', this)">
+        ${CATEGORY_ICONS[c] || ''} ${esc(c)}
+      </button>
+    `).join('');
+  }
+}
+
+function setPubCategory(cat, btn) {
+  state.pubCategory = cat;
+  document.querySelectorAll('#catPicker .chip').forEach(c => c.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  syncPreview();
+}
+
+function skeletonGrid(n = 8) {
+  return Array.from({ length: n }).map(() => `
+    <div class="skeleton-card">
+      <div class="sk sk-banner"></div>
+      <div class="sk-body">
+        <div class="sk sk-line w90"></div>
+        <div class="sk sk-line w70"></div>
+        <div class="sk sk-line w45" style="margin-top:14px"></div>
+        <div class="sk sk-btn"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadItems() {
+  const grid = document.getElementById('itemsGrid');
+  const countEl = document.getElementById('resultCount');
+
+  // 首次加载显示骨架屏
+  if (!state.items.length) {
+    grid.innerHTML = skeletonGrid();
+    countEl.textContent = '加载中…';
+  }
+
+  // 拉分类统计
+  api('/api/categories').then(r => {
+    if (r.success) {
+      state.categories = r.categories;
+      state.catCounts = r.counts;
+      renderCatPicker();
+    }
+  });
+
+  const params = new URLSearchParams({
+    q: state.q,
+    category: state.category,
+    status: state.status,
+    sort: state.sort,
+    page: state.page,
+    page_size: state.pageSize,
+  });
+
+  const data = await api('/api/items?' + params.toString());
+
+  if (!data.success) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <div class="empty-icon">⚠</div>
+      <div class="empty-title">加载失败</div>
+      <div class="empty-desc">${esc(data.error || '请检查后端服务')}</div>
+      <button class="btn secondary small" onclick="loadItems()">重试</button>
+    </div>`;
+    countEl.textContent = '';
+    return;
+  }
+
+  state.items = data.items;
+  state.totalPages = data.total_pages;
+
+  document.getElementById('resultCount').innerHTML =
+    `共 <b>${data.total}</b> 件商品` +
+    (data.stats && data.stats.onsale != null ? ` · <b>${data.stats.onsale}</b> 件在售` : '') +
+    (state.q ? ` · 关键词「${esc(state.q)}」` : '') +
+    (state.category !== '全部' ? ` · 分类「${esc(state.category)}」` : '');
+
+  if (!data.items.length) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">没有找到相关商品</div>
+      <div class="empty-desc">${state.q ? '换个关键词试试，或者' : '当前筛选条件下暂无商品，'}清空筛选条件看看全部商品</div>
+      <button class="btn secondary small" onclick="resetFilters()">清空筛选</button>
+    </div>`;
+    document.getElementById('pager').innerHTML = '';
+    return;
+  }
+
+  renderItems(data.items);
+  renderPager(data);
+}
+
+function resetFilters() {
+  state.q = ''; state.category = '全部'; state.status = ''; state.page = 1;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchClear').classList.remove('show');
+  document.querySelectorAll('[data-status]').forEach(c => {
+    c.classList.toggle('active', c.dataset.status === '');
+  });
+  loadItems();
+}
+
+function renderItems(items) {
+  const grid = document.getElementById('itemsGrid');
+
+  grid.innerHTML = items.map((it, idx) => {
+    const mine = state.info && it.seller_address.toLowerCase() === state.info.address.toLowerCase();
+    const buyerMe = state.info && it.buyer_address &&
+                    it.buyer_address.toLowerCase() === state.info.address.toLowerCase();
+
+    let actions = '';
+    let flowHint = '';
+
+    if (it.status === 0) {
+      // 在售
+      if (mine) {
+        actions = `<button class="btn secondary small" onclick="doRemove(${it.id}, this)">下架商品</button>`;
+      } else if (state.user) {
+        actions = `<button class="btn small" onclick="doBuy(${it.id}, this)">立即购买</button>`;
+      } else {
+        actions = `<button class="btn small" onclick="focusLogin()">登录后购买</button>`;
+      }
+    } else if (it.status === 1) {
+      // 交易中
+      if (buyerMe) {
+        actions = `<button class="btn success small" onclick="doConfirm(${it.id}, this)">确认收货</button>`;
+        flowHint = '待你确认收货，确认后货款放给卖家';
+      } else if (mine) {
+        flowHint = '等待买家确认收货，货款在合约中托管';
+      } else {
+        flowHint = '交易进行中';
+      }
+    } else if (it.status === 2) {
+      // 已售出
+      if (mine || buyerMe) {
+        const target = mine ? it.buyer_name : it.seller_name;
+        actions = `<button class="btn secondary small" onclick="doRate(${it.id}, '${esc(target)}', this)">评价对方</button>`;
+      } else {
+        flowHint = '该商品已售出';
+      }
+    } else {
+      flowHint = '该商品已下架';
+    }
+
+    const catIcon = CATEGORY_ICONS[it.category] || '📦';
+
+    // 有图显示图片，无图显示原来的分类色块
+    const head = it.image_url
+      ? `<div class="item-thumb item-main-link" onclick="openItemDetail(${it.id})">
+           <img src="${esc(it.image_url)}" alt="${esc(it.name)}" loading="lazy">
+           <div class="thumb-badges">
+             <span class="status-tag s${it.status}">${esc(it.status_text)}</span>
+           </div>
+           <span class="hash-chip" title="图片内容哈希（链上存证）">⛓ #${esc((it.image_hash || '').slice(0, 8))}</span>
+         </div>`
+      : `<div class="item-banner c-${esc(it.category)} item-main-link" onclick="openItemDetail(${it.id})">
+           <span>${catIcon}</span>
+           <span class="cat-tag">${esc(it.category)}</span>
+           <span class="status-tag s${it.status}">${esc(it.status_text)}</span>
+         </div>`;
+
+    return `
+      <div class="item-card" style="animation-delay:${Math.min(idx, 8) * 28}ms">
+        ${head}
+        <div class="item-body">
+          <div class="item-name item-main-link" onclick="openItemDetail(${it.id})"
+               title="查看详情与交易时间线">${esc(it.name)}</div>
+          <div class="item-desc">${esc(it.description) || '<i style="color:var(--text-4)">卖家没有填写描述</i>'}</div>
+
+          <div class="item-price-row">
+            <div class="item-price">${it.price_eth}<small>ETH</small></div>
+            <div class="item-time">${esc(it.created_text)}</div>
+          </div>
+
+          <div class="seller-row">
+            <span class="seller-dot">${esc((it.seller_name || '?').slice(0,1))}</span>
+            <span class="seller-name">${esc(it.seller_name)}</span>
+            ${it.seller_rating > 0 ? `<span class="star-badge">★ ${it.seller_rating}</span>` : ''}
+            ${it.seller_sold > 0 ? `<span class="seller-deal">成交 ${it.seller_sold} 笔</span>` : ''}
+          </div>
+
+          ${flowHint ? `<div class="flow-hint">${esc(flowHint)}</div>` : ''}
+          <div class="item-actions" style="margin-top:auto">
+            <button class="btn ghost small" onclick="openItemDetail(${it.id})">详情/时间线</button>
+            ${actions}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderPager(data) {
+  const pager = document.getElementById('pager');
+  if (data.total_pages <= 1) { pager.innerHTML = ''; return; }
+
+  const cur = data.page, total = data.total_pages;
+  const parts = [];
+
+  parts.push(`<button onclick="goPage(${cur - 1})" ${cur === 1 ? 'disabled' : ''}>上一页</button>`);
+
+  // 页码：首页、当前附近、尾页
+  const pages = new Set([1, total, cur, cur - 1, cur + 1]);
+  const sorted = [...pages].filter(p => p >= 1 && p <= total).sort((a, b) => a - b);
+
+  let last = 0;
+  for (const p of sorted) {
+    if (p - last > 1) parts.push('<span class="ellipsis">…</span>');
+    parts.push(`<button class="${p === cur ? 'active' : ''}" onclick="goPage(${p})">${p}</button>`);
+    last = p;
+  }
+
+  parts.push(`<button onclick="goPage(${cur + 1})" ${cur === total ? 'disabled' : ''}>下一页</button>`);
+  pager.innerHTML = parts.join('');
+
+  // 附加信息
+  pager.insertAdjacentHTML('beforeend',
+    `<span style="font-size:12px;color:var(--text-3);margin-left:8px">
+      第 ${cur} / ${total} 页
+     </span>`);
+}
+
+function focusLogin() {
+  toast('请先登录后再操作', 'info');
+  scrollToAuth();
+}
+
+/* ============================================================
+   操作：购买 / 确认 / 下架 / 评价
+   ============================================================ */
+async function doBuy(id, btn) {
+  if (!state.user) { focusLogin(); return; }
+  const it = state.items.find(x => x.id === id);
+  if (!it) return;
+
+  const ok = await modal({
+    icon: '🛡',
+    title: '确认购买',
+    text: '付款后货款会进入智能合约托管，卖家暂时无法拿到钱。等你收到货并点击「确认收货」后，合约才会放款给卖家。',
+    details: [
+      ['商品', it.name],
+      ['价格', it.price_eth + ' ETH'],
+      ['卖家', it.seller_name],
+      ['资金去向', '智能合约托管'],
+    ],
+    okText: '确认付款',
+  });
+  if (!ok) return;
+
+  btnLoading(btn, true);
+  const r = await post('/api/buy', { item_id: id });
+  btnLoading(btn, false);
+
+  if (r.success) {
+    toast(r.message, 'success', 4200);
+    refreshAll();
+  } else {
+    toast(r.error, 'error');
+  }
+}
+
+async function doConfirm(id, btn) {
+  const it = state.items.find(x => x.id === id);
+  const ok = await modal({
+    icon: '📦',
+    title: '确认已收到商品？',
+    text: '点击后，货款将从智能合约转给卖家，同时扣除 1% 平台手续费。此操作不可撤销，请确认你已经收到并检查过商品。',
+    details: [
+      ['商品', it ? it.name : ''],
+      ['金额', it ? it.price_eth + ' ETH' : ''],
+      ['放款金额', it ? (it.price_eth * 0.99).toFixed(4) + ' ETH' : ''],
+      ['平台手续费', it ? (it.price_eth * 0.01).toFixed(4) + ' ETH' : ''],
+    ],
+    okText: '确认收货',
+  });
+  if (!ok) return;
+
+  btnLoading(btn, true);
+  const r = await post('/api/confirm', { item_id: id });
+  btnLoading(btn, false);
+
+  if (r.success) {
+    toast(r.message, 'success', 4200);
+    refreshAll();
+  } else {
+    toast(r.error, 'error');
+  }
+}
+
+async function doRemove(id, btn) {
+  const it = state.items.find(x => x.id === id);
+  const ok = await modal({
+    icon: '🗑',
+    title: '下架商品',
+    text: '下架后商品将不再显示在市场中，但上架记录会永久保留在区块链上。',
+    details: [['商品', it ? it.name : '']],
+    okText: '确认下架',
+    danger: true,
+  });
+  if (!ok) return;
+
+  btnLoading(btn, true);
+  const r = await post('/api/remove', { item_id: id });
+  btnLoading(btn, false);
+
+  if (r.success) { toast(r.message, 'success'); refreshAll(); }
+  else toast(r.error, 'error');
+}
+
+async function doRate(id, target, btn) {
+  const score = await starModal(
+    `评价 ${target}`,
+    '评价会永久记录在区块链上，且每笔交易只能评一次，请客观打分。'
+  );
+  if (!score) return;
+
+  if (btn) btnLoading(btn, true);
+  const r = await post('/api/rate', { item_id: id, score, target });
+  if (btn) btnLoading(btn, false);
+
+  if (r.success) {
+    toast(`已给 ${target} 评 ${score} 星`, 'success');
+    refreshAll();
+  } else {
+    toast(r.error, 'error');
+  }
+}
+
+/* ============================================================
+   发布商品
+   ============================================================ */
+function updateCharCount(inputId, countId, max) {
+  const v = document.getElementById(inputId).value.length;
+  document.getElementById(countId).textContent = `${v}/${max}`;
+}
+
+/* ============================================================
+   图片上传（内容寻址）
+   ============================================================ */
+async function onImagePick(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    toast('图片超过 5MB，请压缩后再上传', 'error');
+    input.value = '';
+    return;
+  }
+
+  const zone = document.getElementById('uploadZone');
+  zone.style.opacity = '.65';
+  zone.style.pointerEvents = 'none';
+
+  const fd = new FormData();
+  fd.append('image', file);
+
+  let r;
+  try {
+    const res = await fetch(API + '/api/upload', { method: 'POST', body: fd });
+    r = await res.json();
+  } catch (e) {
+    r = { success: false, error: '上传失败，请确认后端服务正在运行' };
+  }
+
+  zone.style.opacity = '';
+  zone.style.pointerEvents = '';
+
+  if (!r.success) {
+    toast(r.error || '上传失败', 'error');
+    input.value = '';
+    return;
+  }
+
+  state.pubImageHash = r.image_hash;
+  state.pubImageUrl = r.image_url;
+  state.pubImageSize = file.size;
+
+  document.getElementById('uploadEmpty').style.display = 'none';
+  document.getElementById('uploadFilled').style.display = 'flex';
+  document.getElementById('uploadPreview').src = r.image_url + '?t=' + Date.now();
+  document.getElementById('uploadHash').textContent = r.image_hash;
+  document.getElementById('uploadMeta').textContent =
+    `${(file.size / 1024).toFixed(0)} KB · ${file.type || '图片'} · 该哈希将一并写入区块链`;
+
+  toast('图片已按内容哈希存储', 'success');
+  syncPreview();
+}
+
+function clearImage() {
+  state.pubImageHash = '';
+  state.pubImageUrl = '';
+  state.pubImageSize = 0;
+  const inp = document.getElementById('pubImage');
+  if (inp) inp.value = '';
+  document.getElementById('uploadEmpty').style.display = '';
+  document.getElementById('uploadFilled').style.display = 'none';
+  syncPreview();
+}
+
+function verifyImage(hash) {
+  return post('/api/verify_image', { image_hash: hash });
+}
+
+function syncPreview() {
+  const name = document.getElementById('pubName').value.trim();
+  const desc = document.getElementById('pubDesc').value.trim();
+  const price = document.getElementById('pubPrice').value;
+
+  // 发布账户显示
+  const acc = document.getElementById('pubAccount');
+  if (acc) {
+    if (state.info) {
+      acc.innerHTML = `<b>${esc(state.user)}</b> · <code class="mono">${shortAddr(state.info.address)}</code> · 余额 ${state.info.balance_eth} ETH`;
+    } else {
+      acc.innerHTML = '<span style="color:var(--danger)">请先登录后再发布</span>';
+    }
+  }
+
+  const box = document.getElementById('previewContent');
+  if (!name && !price) {
+    box.innerHTML = `<div style="text-align:center;color:var(--text-4);font-size:12.5px;padding:24px 0">
+      填写商品信息后显示预览
+    </div>`;
+    return;
+  }
+
+  const catIcon = CATEGORY_ICONS[state.pubCategory] || '📦';
+  const thumb = state.pubImageUrl
+    ? `<div class="item-thumb"><img src="${esc(state.pubImageUrl)}" alt="">
+         <div class="thumb-badges"><span class="status-tag s0">在售</span></div>
+         <span class="hash-chip">#${esc(state.pubImageHash.slice(0, 8))}</span>
+       </div>`
+    : `<div class="item-banner c-${esc(state.pubCategory)}">
+         <span>${catIcon}</span>
+         <span class="cat-tag">${esc(state.pubCategory)}</span>
+         <span class="status-tag s0">在售</span>
+       </div>`;
+
+  box.innerHTML = `
+    <div class="item-card" style="margin:0">
+      ${thumb}
+      <div class="item-body">
+        <div class="item-name">${esc(name) || '<span style="color:var(--text-4)">未填写名称</span>'}</div>
+        <div class="item-desc">${esc(desc) || '<span style="color:var(--text-4)">未填写描述</span>'}</div>
+        <div class="item-price-row">
+          <div class="item-price">${price ? Number(price).toFixed(3).replace(/\.?0+$/,'') : '0'}<small>ETH</small></div>
+          <div class="item-time">刚刚</div>
+        </div>
+        <div class="seller-row">
+          <span class="seller-dot">${esc((state.user || '?').slice(0,1))}</span>
+          <span class="seller-name">${esc(state.user || '未登录')}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function resetPublishForm() {
+  document.getElementById('pubName').value = '';
+  document.getElementById('pubDesc').value = '';
+  document.getElementById('pubPrice').value = '';
+  updateCharCount('pubName', 'nameCount', 50);
+  updateCharCount('pubDesc', 'descCount', 300);
+  clearImage();
+  syncPreview();
+}
+
+async function doPublish(btn) {
+  if (!state.user) {
+    toast('请先在上方输入用户名进入平台', 'error');
+    focusLogin();
+    return;
+  }
+
+  const name = document.getElementById('pubName').value.trim();
+  const desc = document.getElementById('pubDesc').value.trim();
+  const price = document.getElementById('pubPrice').value;
+
+  if (!name) { toast('请填写商品名称', 'error'); document.getElementById('pubName').focus(); return; }
+  if (!price || Number(price) <= 0) { toast('请填写有效价格', 'error'); document.getElementById('pubPrice').focus(); return; }
+
+  const ok = await modal({
+    icon: '⛓',
+    title: '确认上架到区块链？',
+    text: '商品信息一旦写入区块链就无法修改或删除，请确认信息无误。',
+    details: [
+      ['名称', name],
+      ['分类', state.pubCategory],
+      ['价格', Number(price) + ' ETH'],
+      ['图片', state.pubImageHash ? '已上传 · 哈希已记录' : '未上传'],
+      ['发布者', state.user],
+    ],
+    okText: '确认上架',
+  });
+  if (!ok) return;
+
+  btnLoading(btn, true);
+
+  let r;
+  if (state.pubImageHash) {
+    // 有图片：用 multipart 提交，后端会连同文件一起处理
+    const fd = new FormData();
+    fd.append('name', name);
+    fd.append('description', desc);
+    fd.append('category', state.pubCategory);
+    fd.append('price_eth', String(Number(price)));
+    const fileInput = document.getElementById('pubImage');
+    if (fileInput.files && fileInput.files[0]) {
+      fd.append('image', fileInput.files[0]);
+    }
+    try {
+      const res = await fetch(API + '/api/items', { method: 'POST', body: fd });
+      r = await res.json();
+    } catch (e) {
+      r = { success: false, error: '提交失败，请检查后端服务' };
+    }
+  } else {
+    r = await post('/api/items', {
+      name: name,
+      description: desc,
+      category: state.pubCategory,
+      price_eth: Number(price),
+    });
+  }
+
+  btnLoading(btn, false);
+
+  if (r.success) {
+    toast(r.message, 'success', 4000);
+    resetPublishForm();
+    switchView('market');
+  } else {
+    toast(r.error, 'error');
+  }
+}
+
+/* ============================================================
+   商品详情 + 交易时间线
+   ============================================================ */
+async function openItemDetail(id) {
+  const root = document.getElementById('modalRoot');
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.innerHTML = `
+    <div class="modal detail-modal" role="dialog">
+      <div style="padding:60px 24px;text-align:center;color:var(--text-3)">正在读取链上数据…</div>
+    </div>`;
+  root.appendChild(mask);
+  mask.onclick = (e) => { if (e.target === mask) closeDetail(); };
+  document.addEventListener('keydown', detailEsc);
+
+  const [detail, timeline] = await Promise.all([
+    api('/api/items/' + id),
+    api('/api/timeline/' + id),
+  ]);
+
+  if (!detail.success) {
+    mask.querySelector('.modal').innerHTML =
+      `<div style="padding:50px 24px;text-align:center;color:var(--text-3)">${esc(detail.error || '加载失败')}</div>`;
+    return;
+  }
+
+  const it = detail.item;
+  const steps = (timeline.success ? timeline.steps : []) || [];
+  const catIcon = CATEGORY_ICONS[it.category] || '📦';
+
+  const mine = state.info && it.seller_address.toLowerCase() === state.info.address.toLowerCase();
+  const buyerMe = state.info && it.buyer_address &&
+                  it.buyer_address !== '0x0000000000000000000000000000000000000000' &&
+                  it.buyer_address.toLowerCase() === state.info.address.toLowerCase();
+
+  // ---- 图片 / 头部 ----
+  const hero = it.image_url
+    ? `<div class="detail-hero"><img src="${esc(it.image_url)}" alt="${esc(it.name)}"></div>`
+    : `<div class="detail-hero-empty">${catIcon}</div>`;
+
+  // ---- 哈希面板 ----
+  let hashPanel = '';
+  if (it.image_hash) {
+    hashPanel = `
+      <div class="hash-panel">
+        <div class="hash-panel-head">
+          <span class="hash-panel-title">🔗 图片内容哈希（已写入区块链）</span>
+          <span class="verify-ok" id="verifyBadge">点击下方按钮校验</span>
+        </div>
+        <div class="hash-value">${esc(it.image_hash)}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:8px;line-height:1.6">
+          这个哈希由图片内容算出。改名、改后缀都没用 —— 只要图片有一个字节不同，哈希就完全变样。
+        </div>
+        <button class="btn ghost small" style="margin-top:9px" onclick="doVerifyImage('${esc(it.image_hash)}', this)">
+          重新计算并校验
+        </button>
+      </div>`;
+  }
+
+  // ---- 操作按钮 ----
+  let actions = '';
+  if (it.status === 0) {
+    if (mine) actions = `<button class="btn secondary" onclick="doRemove(${it.id}, this)">下架商品</button>`;
+    else if (state.user) actions = `<button class="btn" onclick="doBuy(${it.id}, this)">立即购买</button>`;
+    else actions = `<button class="btn" onclick="focusLogin()">登录后购买</button>`;
+  } else if (it.status === 1) {
+    if (buyerMe) actions = `<button class="btn success" onclick="doConfirm(${it.id}, this)">确认收货</button>`;
+    else actions = `<span style="font-size:13px;color:var(--text-3);align-self:center">交易进行中，等待买家确认收货</span>`;
+  } else if (it.status === 2) {
+    if (mine || buyerMe) {
+      const target = mine ? it.buyer_name : it.seller_name;
+      actions = `<button class="btn secondary" onclick="doRate(${it.id}, '${esc(target)}', this)">评价对方</button>`;
+    }
+  }
+
+  // ---- 时间线 ----
+  const timelineHtml = steps.length
+    ? `<div class="timeline">${steps.map(s => `
+        <div class="tl-step t-${esc(s.type)}">
+          <div class="tl-dot">${s.icon}</div>
+          <div class="tl-title">${esc(s.title)}</div>
+          <div class="tl-detail">${esc(s.detail)}</div>
+          <div class="tl-meta">
+            <span>区块 #${s.block}</span>
+            <span>${esc(s.time_text)}</span>
+            <span>${s.amount_eth > 0 ? s.amount_eth + ' ETH' : ''}</span>
+          </div>
+        </div>
+      `).join('')}</div>`
+    : `<div style="font-size:13px;color:var(--text-3);padding:8px 0">暂无链上事件记录</div>`;
+
+  mask.querySelector('.modal').innerHTML = `
+    <button class="detail-close" onclick="closeDetail()" title="关闭">×</button>
+    ${hero}
+    <div class="detail-body">
+      <div class="detail-head">
+        <div>
+          <div class="detail-name">${esc(it.name)}</div>
+          <div style="margin-top:6px">
+            <span class="cat-tag" style="position:static;display:inline-block">${catIcon} ${esc(it.category)}</span>
+            <span class="status-tag s${it.status}" style="position:static;display:inline-block">${esc(it.status_text)}</span>
+          </div>
+        </div>
+        <div class="detail-price">${it.price_eth}<small>ETH</small></div>
+      </div>
+
+      <div class="detail-meta-row">
+        <span>卖家 <b>${esc(it.seller_name)}</b>${it.seller_rating > 0 ? ` ★${it.seller_rating}` : ''}</span>
+        <span>成交 ${it.seller_sold} 笔</span>
+        <span>上架于 ${esc(it.created_full)}</span>
+        ${it.buyer_name ? `<span>买家 <b>${esc(it.buyer_name)}</b></span>` : ''}
+      </div>
+
+      <div class="detail-desc">${esc(it.description) || '<i style="color:var(--text-4)">卖家没有填写描述</i>'}</div>
+
+      ${hashPanel}
+
+      <div class="detail-section-title">交易流转时间线</div>
+      <div style="font-size:11.5px;color:var(--text-3);margin-bottom:12px">
+        以下每一步都是从区块链的事件日志里还原出来的，不是后端另外记的账。
+      </div>
+      ${timelineHtml}
+
+      ${actions ? `<div class="detail-actions">${actions}</div>` : ''}
+    </div>
+  `;
+}
+
+function closeDetail() {
+  const mask = document.querySelector('#modalRoot .modal-mask');
+  if (mask) {
+    mask.style.animation = 'maskIn .16s ease reverse forwards';
+    setTimeout(() => mask.remove(), 150);
+  }
+  document.removeEventListener('keydown', detailEsc);
+}
+
+function detailEsc(e) {
+  if (e.key === 'Escape') closeDetail();
+}
+
+async function doVerifyImage(hash, btn) {
+  btnLoading(btn, true);
+  const r = await verifyImage(hash);
+  btnLoading(btn, false);
+
+  const badge = document.getElementById('verifyBadge');
+  if (!r.success) {
+    if (badge) { badge.className = 'verify-bad'; badge.textContent = r.error || '校验失败'; }
+    toast(r.error || '校验失败', 'error');
+    return;
+  }
+
+  if (badge) {
+    badge.className = r.verified ? 'verify-ok' : 'verify-bad';
+    badge.textContent = r.verified ? '✓ 内容完整，与链上一致' : '✗ 哈希不符，可能被篡改';
+  }
+  toast(r.message, r.verified ? 'success' : 'error', 4200);
+}
+
+/* ============================================================
+   数据看板
+   ============================================================ */
+const CHART_COLORS = ['#1D5DB8','#0E7C5A','#B7791F','#6B4EE6','#C0392B','#2D7FE0'];
+
+async function loadDashboard() {
+  const grid = document.getElementById('metricsGrid');
+  grid.innerHTML = Array.from({ length: 6 }).map(() =>
+    `<div class="metric-card skeleton-metric"><div class="sk sk-line w60"></div>
+     <div class="sk sk-line w80" style="height:24px;margin:10px 0"></div></div>`).join('');
+
+  const d = await api('/api/dashboard');
+  if (!d.success) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <div class="empty-icon">⚠</div>
+      <div class="empty-title">看板数据加载失败</div>
+      <div class="empty-desc">${esc(d.error || '请检查后端服务')}</div>
+      <button class="btn secondary small" onclick="loadDashboard()">重试</button>
+    </div>`;
+    return;
+  }
+
+  renderMetrics(d.metrics);
+  renderTrend(d.trend, d.metrics);
+  renderDonut(d.donut, d.metrics);
+  renderBar(d.price_buckets);
+}
+
+function renderMetrics(m) {
+  const cards = [
+    { icon: '📦', label: '商品总数', value: m.total_items, unit: '件',
+      sub: `在售 ${m.onsale} · 已售 ${m.sold}`, cls: '' },
+    { icon: '💰', label: '累计成交额', value: m.gmv_eth, unit: 'ETH',
+      sub: `平均单价 ${m.avg_price_eth} ETH`, cls: 'accent' },
+    { icon: '🔒', label: '当前托管资金', value: m.locked_eth, unit: 'ETH',
+      sub: `合约余额 ${m.escrow_balance_eth} ETH`, cls: 'lock' },
+    { icon: '⏳', label: '交易中订单', value: m.in_escrow, unit: '笔',
+      sub: '等待买家确认收货', cls: '' },
+    { icon: '🏦', label: '平台手续费', value: m.platform_fee_eth, unit: 'ETH',
+      sub: '按成交额 1% 计', cls: '' },
+    { icon: '🚫', label: '已下架', value: m.removed, unit: '件',
+      sub: `完成交易 ${m.sold} 笔`, cls: '' },
+  ];
+
+  document.getElementById('metricsGrid').innerHTML = cards.map(c => `
+    <div class="metric-card ${c.cls}">
+      <div class="metric-head"><span class="metric-icon">${c.icon}</span>${c.label}</div>
+      <div class="metric-value">${c.value}<span class="unit">${c.unit}</span></div>
+      <div class="metric-sub">${c.sub}</div>
+    </div>
+  `).join('');
+}
+
+function destroyChart(key) {
+  if (state.charts[key]) { state.charts[key].destroy(); delete state.charts[key]; }
+}
+
+function renderTrend(trend, m) {
+  destroyChart('trend');
+  const ctx = document.getElementById('trendChart');
+  const note = document.getElementById('trendNote');
+
+  if (!trend.labels.length) {
+    note.textContent = '还没有成交记录。完成一笔「确认收货」后，这里就会画出趋势。';
+    ctx.parentElement.innerHTML = `<div class="empty" style="padding:50px 0">
+      <div class="empty-icon">📈</div>
+      <div class="empty-title">暂无成交数据</div>
+      <div class="empty-desc">卖出并确认收货后即可看到趋势</div>
+    </div>`;
+    return;
+  }
+
+  note.textContent = `共 ${trend.labels.length} 天有成交，累计 ${m.gmv_eth} ETH。`;
+
+  const grad = ctx.getContext('2d').createLinearGradient(0, 0, 0, 260);
+  grad.addColorStop(0, 'rgba(29,93,184,.28)');
+  grad.addColorStop(1, 'rgba(29,93,184,.02)');
+
+  state.charts.trend = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: trend.labels,
+      datasets: [{
+        label: '当日成交额 (ETH)',
+        data: trend.values,
+        borderColor: '#1D5DB8',
+        backgroundColor: grad,
+        fill: true,
+        tension: .34,
+        pointRadius: 4,
+        pointBackgroundColor: '#fff',
+        pointBorderColor: '#1D5DB8',
+        pointBorderWidth: 2,
+        pointHoverRadius: 6,
+        borderWidth: 2.5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1A1D21', padding: 11, cornerRadius: 8,
+          titleFont: { size: 12 }, bodyFont: { size: 12 },
+          callbacks: { label: c => ` 成交额 ${c.parsed.y} ETH` },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#8B93A3', font: { size: 11 } } },
+        y: {
+          beginAtZero: true,
+          grid: { color: '#EEF0F3' },
+          ticks: { color: '#8B93A3', font: { size: 11 }, callback: v => v + ' Ξ' },
+        },
+      },
+    },
+  });
+}
+
+function renderDonut(donut, m) {
+  destroyChart('donut');
+  const ctx = document.getElementById('donutChart');
+  const note = document.getElementById('donutNote');
+
+  if (!donut.labels.length) {
+    ctx.parentElement.innerHTML = `<div class="empty" style="padding:40px 0">
+      <div class="empty-icon">🥧</div><div class="empty-title">暂无数据</div></div>`;
+    note.textContent = '';
+    return;
+  }
+
+  note.textContent = donut.is_amount
+    ? '按各分类的成交金额占比（有成交后自动切换为金额口径）。'
+    : '当前还没有成交，先按各分类的上架数量占比展示。';
+
+  state.charts.donut = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: donut.labels,
+      datasets: [{
+        data: donut.values,
+        backgroundColor: CHART_COLORS,
+        borderWidth: 2,
+        borderColor: '#fff',
+        hoverOffset: 8,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { boxWidth: 10, boxHeight: 10, padding: 12, color: '#5A6170', font: { size: 11.5 } },
+        },
+        tooltip: {
+          backgroundColor: '#1A1D21', padding: 10, cornerRadius: 8,
+          callbacks: {
+            label: c => {
+              const total = c.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total ? (c.parsed / total * 100).toFixed(1) : 0;
+              const unit = donut.is_amount ? ' ETH' : ' 件';
+              return ` ${c.label}：${c.parsed}${unit}（${pct}%）`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderBar(buckets) {
+  destroyChart('bar');
+  const ctx = document.getElementById('barChart');
+
+  const hasData = buckets.values.some(v => v > 0);
+  if (!hasData) {
+    ctx.parentElement.innerHTML = `<div class="empty" style="padding:40px 0">
+      <div class="empty-icon">📊</div><div class="empty-title">暂无商品</div></div>`;
+    return;
+  }
+
+  state.charts.bar = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: buckets.labels,
+      datasets: [{
+        label: '商品数量',
+        data: buckets.values,
+        backgroundColor: buckets.labels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length] + 'CC'),
+        borderRadius: 6,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1A1D21', padding: 10, cornerRadius: 8,
+          callbacks: { label: c => ` ${c.parsed.y} 件商品` },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: '#8B93A3', font: { size: 11 } },
+          title: { display: true, text: '价格区间 (ETH)', color: '#8B93A3', font: { size: 11 } },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: '#EEF0F3' },
+          ticks: { color: '#8B93A3', font: { size: 11 }, precision: 0 },
+        },
+      },
+    },
+  });
+}
+
+/* ============================================================
+   我的交易
+   ============================================================ */
+async function loadMyOrders() {
+  const statsBox = document.getElementById('myStats');
+  const todoBox = document.getElementById('todoBox');
+  const itemsBox = document.getElementById('myItems');
+
+  if (!state.user) {
+    statsBox.innerHTML = `<div class="empty">
+      <div class="empty-icon">🔐</div>
+      <div class="empty-title">还未登录</div>
+      <div class="empty-desc">请在上方登录或注册账号</div>
+      <button class="btn small" onclick="scrollToAuth()">去登录</button>
+    </div>`;
+    todoBox.innerHTML = '';
+    itemsBox.innerHTML = '';
+    return;
+  }
+
+  // 刷新用户信息（用 /api/me，身份由 token 决定）
+  const info = await api('/api/me');
+  if (info.success) {
+    state.info = info;
+    renderUserBar();
+  }
+
+  const it = state.info || {};
+  statsBox.innerHTML = `
+    <div class="card-title">账户概览</div>
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-label">链上地址</div>
+        <div class="stat-value sm">${shortAddr(it.address)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">ETH 余额</div>
+        <div class="stat-value">${it.balance_eth ?? '-'}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">成功卖出</div>
+        <div class="stat-value">${it.sold_count ?? 0} <span style="font-size:13px;color:var(--text-3)">件</span></div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">成功买入</div>
+        <div class="stat-value">${it.bought_count ?? 0} <span style="font-size:13px;color:var(--text-3)">件</span></div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">信誉评分</div>
+        <div class="stat-value">${it.avg_rating > 0 ? '★ ' + it.avg_rating : '<span style="font-size:14px;color:var(--text-3)">暂无</span>'}</div>
+      </div>
+    </div>
+  `;
+
+  // 拉取我的商品（服务端按 token 身份过滤，前端拿不到别人数据）
+  const data = await api('/api/my_items');
+  if (!data.success) {
+    itemsBox.innerHTML = '<div class="empty">加载失败</div>';
+    return;
+  }
+
+  const myAddr = (it.address || '').toLowerCase();
+  const mine = data.items;
+  // 服务端已返回 is_seller 标记，直接用它判断角色
+  mine.forEach(x => {
+    x.seller_address = x.seller_address || '';
+    x.buyer_address = x.buyer_address || '';
+  });
+
+  // 待办事项
+  const todos = [];
+  mine.forEach(x => {
+    if (x.status === 1 && x.buyer_address.toLowerCase() === myAddr) {
+      todos.push({ type: 'confirm', item: x, text: `「${x.name}」等待你确认收货` });
+    }
+    if (x.status === 2) {
+      todos.push({ type: 'rate', item: x, text: `「${x.name}」交易已完成，可以评价对方` });
+    }
+  });
+
+  if (todos.length) {
+    todoBox.innerHTML = `
+      <div class="card" style="margin-bottom:18px;border-color:var(--warning-border);background:var(--warning-light)">
+        <div class="card-title" style="color:var(--warning)">待处理事项（${todos.length}）</div>
+        ${todos.map(t => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;
+                      padding:10px 0;border-bottom:1px solid rgba(183,121,31,.15);flex-wrap:wrap">
+            <span style="font-size:13px">${esc(t.text)}</span>
+            <button class="btn small ${t.type === 'confirm' ? 'success' : 'secondary'}"
+                    onclick="switchView('market')">去处理</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    todoBox.innerHTML = '';
+  }
+
+  if (!mine.length) {
+    itemsBox.innerHTML = `<div class="card"><div class="empty">
+      <div class="empty-icon">📭</div>
+      <div class="empty-title">还没有交易记录</div>
+      <div class="empty-desc">去商品市场逛逛，或者发布一件闲置商品</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button class="btn small" onclick="switchView('market')">逛市场</button>
+        <button class="btn secondary small" onclick="switchView('publish')">发布商品</button>
+      </div>
+    </div></div>`;
+    return;
+  }
+
+  itemsBox.innerHTML = `
+    <div class="card">
+      <div class="card-title">相关交易（${mine.length} 条）</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>商品</th>
+              <th>价格</th>
+              <th>我的角色</th>
+              <th>交易对手</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${mine.map(x => {
+              const isSeller = !!x.is_seller;   // 角色由服务端判定
+              const role = isSeller ? '卖家' : '买家';
+              const other = isSeller
+                ? (x.buyer_name || '等待买家')
+                : (x.seller_name || '-');
+              let action = '';
+
+              if (x.status === 0 && isSeller) {
+                action = `<button class="btn secondary small" onclick="doRemove(${x.id}, this)">下架</button>`;
+              } else if (x.status === 1 && !isSeller) {
+                action = `<button class="btn success small" onclick="doConfirm(${x.id}, this)">确认收货</button>`;
+              } else if (x.status === 1 && isSeller) {
+                action = `<span style="font-size:12px;color:var(--warning)">等待买家收货</span>`;
+              } else if (x.status === 2) {
+                const target = isSeller ? x.buyer_name : x.seller_name;
+                action = `<button class="btn secondary small" onclick="doRate(${x.id}, '${esc(target)}', this)">评价</button>`;
+              } else {
+                action = '<span style="font-size:12px;color:var(--text-4)">—</span>';
+              }
+
+              return `<tr>
+                <td><b>${esc(x.name)}</b><div style="font-size:11.5px;color:var(--text-3);margin-top:2px">${esc(x.category)}</div></td>
+                <td style="white-space:nowrap"><b style="color:var(--primary)">${x.price_eth}</b> ETH</td>
+                <td><span class="chip" style="padding:2px 9px;font-size:12px;cursor:default">${role}</span></td>
+                <td>${esc(other)}</td>
+                <td><span class="status-tag s${x.status}" style="position:static;display:inline-block">${esc(x.status_text)}</span></td>
+                <td>${action}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   区块链浏览
+   ============================================================ */
+async function loadChain() {
+  const st = await api('/api/status');
+  const box = document.getElementById('chainStats');
+
+  if (!st.contract_address) {
+    box.innerHTML = '<div class="empty">无法获取链状态</div>';
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="stat-box">
+      <div class="stat-label">当前区块高度</div>
+      <div class="stat-value">${st.block_number}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">链 ID</div>
+      <div class="stat-value sm">${st.chain_id}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">合约地址</div>
+      <div class="stat-value sm">${shortAddr(st.contract_address)}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">合约托管资金</div>
+      <div class="stat-value">${st.escrow_balance} <span style="font-size:13px;color:var(--text-3)">ETH</span></div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">测试账户数</div>
+      <div class="stat-value">${st.accounts_count}</div>
+    </div>
+  `;
+
+  const tx = await api('/api/transactions');
+  const tbody = document.getElementById('txTable');
+
+  if (!tx.success || !tx.transactions.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-3)">暂无交易记录</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = tx.transactions.map(t => `
+    <tr>
+      <td><b>#${t.block}</b></td>
+      <td class="mono" title="${esc(t.hash)}">${esc(t.hash.slice(0, 24))}…</td>
+      <td class="mono">${shortAddr(t.from)}
+        ${t.to && t.to.toLowerCase() === (st.contract_address || '').toLowerCase()
+          ? '<span style="font-size:11px;color:var(--purple);margin-left:6px">→ 合约</span>' : ''}
+      </td>
+      <td style="text-align:right;white-space:nowrap">
+        ${t.value_eth > 0
+          ? `<b style="color:var(--primary)">${t.value_eth}</b>`
+          : '<span style="color:var(--text-4)">—</span>'}
+      </td>
+    </tr>
+  `).join('');
+
+  document.getElementById('blockNum').textContent = '区块 ' + tx.block_number;
+}
+
+async function doReset() {
+  const ok = await modal({
+    icon: '⚠',
+    title: '重置整条区块链？',
+    text: '所有商品、交易记录、信誉评分都会被清空，链会回到初始状态。此操作不可恢复。',
+    okText: '确认重置',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const r = await post('/api/reset');
+  if (r.success) {
+    toast('链已重置，请重新登录', 'success');
+    clearAuth();
+    state.items = []; state.q = ''; state.category = '全部'; state.status = ''; state.page = 1;
+    setTimeout(() => location.reload(), 900);
+  } else {
+    toast(r.error || '重置失败', 'error');
+  }
+}
+
+/* ============================================================
+   状态检查
+   ============================================================ */
+async function checkStatus() {
+  const pill = document.getElementById('statusPill');
+  const text = document.getElementById('statusText');
+
+  try {
+    const st = await api('/api/status');
+    if (st.contract_address) {
+      pill.classList.remove('off');
+      text.textContent = '链已连接';
+      document.getElementById('blockNum').textContent = '区块 ' + st.block_number;
+    } else throw new Error();
+  } catch (e) {
+    pill.classList.add('off');
+    text.textContent = '未连接';
+  }
+}
+
+function refreshAll() {
+  loadItems();
+  const active = document.querySelector('.view.active');
+  if (active) {
+    if (active.id === 'view-orders') loadMyOrders();
+    if (active.id === 'view-board')  loadDashboard();
+    if (active.id === 'view-chain')  loadChain();
+  }
+  if (state.token) {
+    api('/api/me').then(r => {
+      if (r.success) { state.info = r; renderUserBar(); syncPreview(); }
+    });
+  }
+  checkStatus();
+}
+
+/* 滚回登录框（未登录时的引导） */
+function scrollToAuth() {
+  const el = document.getElementById('authCard');
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const nameInput = document.getElementById('loginName');
+  if (nameInput) setTimeout(() => nameInput.focus(), 350);
+}
+
+/* ============================================================
+   快捷键
+   ============================================================ */
+document.addEventListener('keydown', e => {
+  // Ctrl/Cmd + K 聚焦搜索
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    const view = document.querySelector('.view.active');
+    if (view && view.id !== 'view-market') switchView('market');
+    setTimeout(() => document.getElementById('searchInput').focus(), 100);
+  }
+});
+
+/* ============================================================
+   初始化
+   ============================================================ */
+(async function init() {
+  // 密码框实时强度提示（仅注册模式显示，但监听一直挂着）
+  const pwd = document.getElementById('loginPassword');
+  if (pwd) {
+    pwd.addEventListener('input', () => {
+      updateStrength();
+      if (state.authMode === 'register') {
+        const v = pwd.value;
+        const tip = document.getElementById('pwdTip');
+        if (!v) { tip.className = 'field-tip'; tip.textContent = ''; }
+        else if (v.length < 6) { tip.className = 'field-tip err'; tip.textContent = '密码至少 6 位'; }
+        else if (v.length > 64) { tip.className = 'field-tip err'; tip.textContent = '密码最长 64 位'; }
+        else if (/^\d+$/.test(v)) { tip.className = 'field-tip err'; tip.textContent = '不能全是数字，请混合字母'; }
+        else if (new Set(v).size === 1) { tip.className = 'field-tip err'; tip.textContent = '不能是重复的同一个字符'; }
+        else { tip.className = 'field-tip ok'; tip.textContent = '格式符合要求'; }
+      }
+    });
+  }
+
+  // 优先尝试用本地 token 恢复登录态
+  const loggedIn = await restoreSession();
+
+  renderCatPicker();
+  checkStatus();
+  await loadItems();
+
+  if (!loggedIn) {
+    // 未登录：引导用户到登录框
+    const nameInput = document.getElementById('loginName');
+    if (nameInput) nameInput.focus();
+  }
+
+  setInterval(checkStatus, 6000);
+})();
+</script>
+
+</body>
+</html>
