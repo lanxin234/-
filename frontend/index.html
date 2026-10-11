@@ -264,32 +264,81 @@
      登录 / 注册卡片
      ============================================================ */
   .auth-card {
-    background: var(--card);
+    position: relative;
+    background:
+      linear-gradient(180deg, #FFFFFF 0%, #FCFDFF 100%);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-    padding: 22px 24px;
+    box-shadow: 0 6px 22px rgba(16,24,40,.08);
+    padding: 26px 28px 24px;
     margin-bottom: 22px;
     max-width: 520px;
     animation: authIn .32s cubic-bezier(.34,1.15,.64,1);
+  }
+  /* 顶部渐变细条，给卡片一个视觉起点 */
+  .auth-card::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: var(--primary-gradient);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
   @keyframes authIn {
     from { opacity: 0; transform: translateY(-8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
   .auth-head {
-    display: flex; align-items: center; gap: 13px;
-    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 22px;
   }
   .auth-icon {
-    width: 44px; height: 44px; border-radius: 12px;
-    background: linear-gradient(135deg, var(--primary) 0%, #2D7FE0 100%);
+    width: 48px; height: 48px; border-radius: 14px;
+    background: var(--primary-gradient);
     display: grid; place-items: center;
-    font-size: 20px; flex-shrink: 0;
-    box-shadow: 0 3px 10px rgba(29,93,184,.25);
+    font-size: 22px; flex-shrink: 0;
+    box-shadow: 0 4px 14px rgba(29,93,184,.30);
+    position: relative;
   }
-  .auth-title { font-size: 16px; font-weight: 650; margin-bottom: 2px; }
-  .auth-sub { font-size: 12px; color: var(--text-3); }
+  /* 图标外圈柔光，让头部更聚焦 */
+  .auth-icon::after {
+    content: '';
+    position: absolute; inset: -6px;
+    border-radius: 18px;
+    background: radial-gradient(circle, rgba(29,93,184,.14) 0%, rgba(29,93,184,0) 70%);
+    z-index: -1;
+  }
+  .auth-title { font-size: 17px; font-weight: 650; margin-bottom: 3px; letter-spacing: -.01em; }
+  .auth-sub { font-size: 12px; color: var(--text-3); line-height: 1.5; }
+
+  /* 输入框左侧图标：用 SVG data URI 做背景，纯 CSS 实现，不改动 HTML 结构
+     （登录表单在 JS 里有一份 AUTH_FORM_TEMPLATE 副本，改结构容易两边不同步） */
+  #loginName, #loginPassword, #regNickname {
+    padding-left: 40px;
+    background-repeat: no-repeat;
+    background-position: 14px center;
+    background-size: 16px 16px;
+    transition: border-color .16s ease, box-shadow .16s ease, background-image .16s ease;
+  }
+  /* 用户名：人形 */
+  #loginName {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238B93A3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E");
+  }
+  /* 密码：锁 */
+  #loginPassword {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238B93A3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E");
+  }
+  /* 昵称：笑脸 */
+  #regNickname {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238B93A3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M8 14s1.5 2 4 2 4-2 4-2'/%3E%3Cpath d='M9 9h.01M15 9h.01'/%3E%3C/svg%3E");
+  }
+  /* 聚焦时图标转为主色，和边框/光晕呼应 */
+  #loginName:focus {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231D5DB8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E");
+  }
+  #loginPassword:focus {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231D5DB8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E");
+  }
 
   .auth-actions { display: flex; gap: 10px; margin-top: 18px; }
 
@@ -297,8 +346,13 @@
     font-size: 12.5px; line-height: 1.6;
     padding: 0; border-radius: var(--radius-sm);
     margin-top: 12px; display: none;
+    animation: msgIn .22s ease;
   }
-  .auth-msg.show { display: block; padding: 9px 12px; }
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .auth-msg.show { display: block; padding: 10px 13px; }
   .auth-msg.error {
     background: var(--danger-light); color: var(--danger);
     border: 1px solid var(--danger-border);
@@ -337,21 +391,26 @@
     display: flex; align-items: center; gap: 10px;
     margin-top: 9px;
   }
-  .strength-bars { display: flex; gap: 4px; flex: 1; }
+  .strength-bars { display: flex; gap: 5px; flex: 1; }
   .strength-bars .sb {
-    height: 4px; flex: 1; border-radius: 2px;
-    background: var(--border); transition: background .2s ease;
+    height: 6px; flex: 1; border-radius: 3px;
+    background: var(--border);
+    transition: background .28s ease, box-shadow .28s ease;
   }
-  .strength-bars.s1 .sb:nth-child(1) { background: var(--danger); }
-  .strength-bars.s2 .sb:nth-child(-n+2) { background: var(--warning); }
-  .strength-bars.s3 .sb { background: var(--success); }
+  /* 点亮的那几格加一点同色柔光，层次更明显 */
+  .strength-bars.s1 .sb:nth-child(1) { background: var(--danger); box-shadow: 0 0 0 1px rgba(192,57,43,.12); }
+  .strength-bars.s2 .sb:nth-child(-n+2) { background: var(--warning); box-shadow: 0 0 0 1px rgba(183,121,31,.12); }
+  .strength-bars.s3 .sb { background: var(--success); box-shadow: 0 0 0 1px rgba(14,124,90,.12); }
   .strength-text { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 
   .auth-note {
     margin-top: 18px; padding-top: 14px;
     border-top: 1px solid var(--border);
     font-size: 11.5px; color: var(--text-3); line-height: 1.6;
+    display: flex; align-items: flex-start; gap: 7px;
   }
+  /* 提示前的小灯泡单独排，避免文字换行时错位 */
+  .auth-note > span { display: block; }
 
   /* 已登录后的用户条（复用原样式） */
   .login-bar {
@@ -361,15 +420,25 @@
     border-radius: var(--radius);
     padding: 16px 20px;
     margin-bottom: 20px;
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 3px 12px rgba(29,93,184,.10);
+    animation: msgIn .28s ease;
   }
   .avatar {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--primary) 0%, #2D7FE0 100%);
+    width: 42px; height: 42px; border-radius: 50%;
+    background: var(--primary-gradient);
     color: #fff; display: grid; place-items: center;
     font-size: 15px; font-weight: 600;
     flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(29,93,184,.25);
+    box-shadow: 0 3px 10px rgba(29,93,184,.30);
+    position: relative;
+  }
+  /* 头像外圈柔光，和登录态呼应 */
+  .avatar::after {
+    content: '';
+    position: absolute; inset: -4px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(29,93,184,.14) 0%, rgba(29,93,184,0) 70%);
+    z-index: -1;
   }
   .login-text { flex-grow: 1; min-width: 0; }
   .login-name {
