@@ -118,6 +118,7 @@ xiangmu/
 │   ├── test_new_features.py     ← 图片/时间线/看板测试（62 个断言）
 │   ├── test_login_flow.py       ← 登录态健壮性测试（18 个断言，专治"登录已失效"）
 │   ├── test_frontend_auth.js    ← 前端登录界面行为测试（29 个断言，jsdom 真实执行）
+│   ├── sync_source.py           ← 把源代码同步到归档目录（改完代码跑一次）
 │   └── seed_demo.py             ← 一键填充演示数据（含注册 + 登录）
 ├── docs/
 │   ├── 项目说明.md              ← 详细设计与实现说明
@@ -430,6 +431,31 @@ NODE_PATH="C:/Users/25191/.workbuddy/binaries/node/workspace/node_modules" \
 
 > **本地跑 HTTP 测试的小坑**：如果环境里设了 `http_proxy`，本机请求会被代理拦下来（报 `502 upstream connect failed`）。
 > 先 `export NO_PROXY="127.0.0.1,localhost"` 再跑即可。
+
+### Q: 改完代码后怎么同步到「项目源代码」归档目录？
+
+归档目录是 `C:/Users/25191/Desktop/项目源代码`（纯副本，不含 `.git`）。**每次改完代码跑这一条即可**：
+
+```bash
+PY=C:/Users/25191/.venvs/base/Scripts/python.exe
+"$PY" scripts/sync_source.py
+```
+
+它会：
+1. 按 `.gitignore` 同样的规则**排除** `.git` / `__pycache__` / `build` / `uploads` / 日志 / `.secret_key` / 本地临时文件
+2. 只复制**新增或内容有变**的文件，不重复搬运
+3. 复制后**逐个校验 md5**，全部一致才算成功（有任何不一致就非零退出）
+
+常用参数：
+
+```bash
+"$PY" scripts/sync_source.py --dry-run    # 只看差异，不实际复制
+"$PY" scripts/sync_source.py --prune      # 顺手删掉归档里已不存在的旧文件
+"$PY" scripts/sync_source.py --dest "D:/别的目录"   # 同步到别的归档目录
+```
+
+> **刻意不做的事**：默认**不删除**归档里的任何文件（避免误伤），多余文件只提示、不清理，需清理要显式加 `--prune`。
+> 另外脚本**不会**把 `.secret_key`（令牌签名密钥）、日志、`__pycache__` 带进归档 —— 归档里只放源代码。
 
 ---
 
