@@ -2803,7 +2803,9 @@ async function doPublish(btn) {
 
   let r;
   if (state.pubImageHash) {
-    // 有图片：用 multipart 提交，后端会连同文件一起处理
+    // 有图片：用 multipart 提交，后端会连同文件一起处理。
+    // 必须走 api() —— 它会自动带上 Authorization 头。
+    // （之前这里用的裸 fetch，漏了令牌 → 后端判为未登录 → 报"登录已失效"）
     const fd = new FormData();
     fd.append('name', name);
     fd.append('description', desc);
@@ -2813,12 +2815,8 @@ async function doPublish(btn) {
     if (fileInput.files && fileInput.files[0]) {
       fd.append('image', fileInput.files[0]);
     }
-    try {
-      const res = await fetch(API + '/api/items', { method: 'POST', body: fd });
-      r = await res.json();
-    } catch (e) {
-      r = { success: false, error: '提交失败，请检查后端服务' };
-    }
+    // 注意：不要手动设 Content-Type，浏览器会自己带上 multipart 边界
+    r = await api('/api/items', { method: 'POST', body: fd });
   } else {
     r = await post('/api/items', {
       name: name,
@@ -2835,7 +2833,10 @@ async function doPublish(btn) {
     resetPublishForm();
     switchView('market');
   } else {
-    toast(r.error, 'error');
+    // 登录失效/账户池满的情况，api() 已经提示过了，这里不重复弹
+    if (r.code !== 'AUTH_REQUIRED' && r.code !== 'ACCOUNT_POOL_FULL') {
+      toast(r.error || '上架失败', 'error');
+    }
   }
 }
 

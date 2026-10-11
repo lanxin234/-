@@ -118,6 +118,7 @@ xiangmu/
 │   ├── test_new_features.py     ← 图片/时间线/看板测试（62 个断言）
 │   ├── test_login_flow.py       ← 登录态健壮性测试（18 个断言，专治"登录已失效"）
 │   ├── test_frontend_auth.js    ← 前端登录界面行为测试（29 个断言，jsdom 真实执行）
+│   ├── test_publish_auth.js     ← 上架鉴权回归测试（11 个断言，防"带图漏令牌"复现）
 │   ├── sync_source.py           ← 把源代码同步到归档目录（改完代码跑一次）
 │   └── seed_demo.py             ← 一键填充演示数据（含注册 + 登录）
 ├── docs/
@@ -211,23 +212,25 @@ C:/Users/25191/.venvs/base/Scripts/python.exe scripts/test_auth.py
 
 ### 登录态为什么不会"莫名其妙失效"
 
-早期版本经常弹「登录已失效」，排查后发现是**三个独立原因叠在一起**，现在逐一堵住了：
+早期版本经常弹「登录已失效」，排查后发现是**四个独立原因叠在一起**，现在逐一堵住了：
 
 | 原因 | 现象 | 修复 |
 |---|---|---|
 | **重置链后地址映射丢失** | 令牌签名有效、账号也还在，但 `user_sessions` 被清空 → 每个接口都查不到链上地址 | 新增 `state.ensure_account()` 自愈：地址没了就**自动补一个**，而不是报错把用户踢下线 |
 | **错误语义混乱** | 无地址时有的接口返回 400「账号异常」、有的返回 404「账号不存在」，前端只能瞎猜 | 统一为两个明确错误码：真失效 → `401 AUTH_REQUIRED`；账户池满 → `503 ACCOUNT_POOL_FULL` |
 | **掉线后没有登录入口** | 被踢下线时界面只剩一个只读的用户条，想重登只能手动刷新页面 | 新增 `renderAuthForm()`：掉线后**原地重建登录表单**，并把掉线原因显示在表单上 |
+| **带图片上架的请求漏带令牌** | **只有附了图片才报**「登录已失效」——那条分支用了裸 `fetch`，绕过了会自动带令牌的 `api()` 封装 | 改走 `api('/api/items', { method:'POST', body: fd })`；并用测试静态扫描全站防止再写漏 |
 
 另外「重置整条链」按钮以前会 `location.reload()` 整页刷新，把用户静默丢回登录页 —— 现在改为原地还原表单并明确提示「整条链已重置，请重新登录」。
 
-**验证方式**（`scripts/test_login_flow.py` + `scripts/test_frontend_auth.js`）：
+**验证方式**（`scripts/test_login_flow.py` + `scripts/test_frontend_auth.js` + `scripts/test_publish_auth.js`）：
 
 ```
 【2】登录 → 重置链（保留账号）→ /api/me 仍返回同一用户（不再 404）   ✓
 【3】乱码令牌 / 登出后的令牌 → 401 + AUTH_REQUIRED                    ✓
 【4】账户池用尽 → 503 + ACCOUNT_POOL_FULL，且已登录用户不受连累        ✓
 【前端】掉线后登录表单原地重建、原因可见、可立即重新提交               ✓
+【上架】带图片 / 不带图片 提交都带 Authorization 头                    ✓
 ```
 
 ---
@@ -425,6 +428,8 @@ PY=C:/Users/25191/.venvs/base/Scripts/python.exe
 # 前端界面行为测试（需要 jsdom，跑一次装好即可）
 NODE_PATH="C:/Users/25191/.workbuddy/binaries/node/workspace/node_modules" \
   node scripts/test_frontend_auth.js   # 29 断言，真实执行页面脚本
+NODE_PATH="C:/Users/25191/.workbuddy/binaries/node/workspace/node_modules" \
+  node scripts/test_publish_auth.js    # 11 断言，带图片上架的鉴权回归
 ```
 
 `seed_demo.py` 是**追加**的 —— 它不重置链，所以重复跑会让商品越堆越多。想从干净状态开始，先调一次 `/api/reset`。
