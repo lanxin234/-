@@ -27,6 +27,11 @@ import time
 TOKEN_TTL = 2 * 60 * 60          # token 有效期：2 小时
 TOKEN_RENEW_THRESHOLD = 15 * 60  # 剩余不足 15 分钟时自动续期
 
+# 「记住我」勾上时的有效期：30 天。
+# 这是局域网自用场景的取舍 —— 共用一台电脑又不想每次输密码，
+# 30 天足够久，又不至于像"永不过期"那样一旦泄漏就长期有效。
+REMEMBER_TTL = 30 * 24 * 60 * 60
+
 # scrypt 参数（内存 ~8MB，单次约 90ms，兼顾安全与响应速度）
 # 注：N 越大越难暴力破解但越慢。演示环境取 2^13（业界常见下限是 2^14），
 #     因为在无 GPU 的纯 Python 环境下 2^14 会让登录有 200ms 可感知延迟。
@@ -168,17 +173,39 @@ def _sign(payload_b64: str) -> str:
     return _b64e(mac.digest())
 
 
-def create_token(username: str) -> str:
-    """为用户签发一个 token"""
+def create_token(username: str, ttl: int = None) -> str:
+    """
+    为用户签发一个 token。
+
+    参数:
+      ttl -- 有效期（秒）。不传就用默认的 2 小时。
+             勾了「记住我」时前端会要求长一点（见 REMEMBER_TTL），
+             这样关掉浏览器、第二天再打开仍然是登录状态。
+    """
     now = int(time.time())
     payload = {
         "u": username,
         "iat": now,
-        "exp": now + TOKEN_TTL,
+        "exp": now + (ttl if ttl else TOKEN_TTL),
         "jti": secrets.token_hex(8),
     }
     payload_b64 = _b64e(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     return f"{payload_b64}.{_sign(payload_b64)}"
+
+
+def token_expiry(token: str) -> int:
+    """
+    取 token 的过期时间戳（用于把已登出的 token 记进黑名单时能顺带记下
+    "什么时候可以忘掉它"）。解析不出来就返回 0。
+    """
+    if not token or not isinstance(token, str) or "." not in token:
+        return 0
+    payload_b64, _, _sig = token.rpartition(".")
+    try:
+        payload = json.loads(_b64d(payload_b64).decode("utf-8"))
+        return int(payload.get("exp", 0))
+    except (ValueError, UnicodeDecodeError, TypeError):
+        return 0
 
 
 def verify_token(token: str):

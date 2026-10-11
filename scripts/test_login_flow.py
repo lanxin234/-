@@ -171,6 +171,52 @@ body = safe_json(r)
 check("无令牌访问 /api/me 返回 401", r.status_code == 401, f"HTTP {r.status_code}")
 check("无令牌错误码为 AUTH_REQUIRED", body.get("code") == "AUTH_REQUIRED", str(body)[:140])
 
+# ---------- 6. 「记住我」 ----------
+# 背景：账号密码早就落盘了，但登录态（token）默认只有 2 小时。
+# 用户说「让项目记住密码」，真正想要的是"下次打开不用再登录"。
+print("\n【6】记住我：长令牌 + 登出后确实失效")
+jpost("/api/reset", {"wipe_credentials": True})
+time.sleep(0.3)
+
+r = jpost("/api/register", {"username": "记me", "password": "Remember123"})
+reg = r.json()
+check("注册新账号成功", reg.get("success"), str(reg)[:160])
+
+# 普通登录：2 小时
+r = jpost("/api/login", {"username": "记me", "password": "Remember123"})
+d = r.json()
+check("默认登录成功", d.get("success"), str(d)[:160])
+check("默认令牌有效期 = 2 小时", d.get("expires_in") == 7200, d.get("expires_in"))
+short_token = d.get("token")
+
+# 记住我：30 天
+r = jpost("/api/login", {"username": "记me", "password": "Remember123", "remember": True})
+d = r.json()
+check("「记住我」登录成功", d.get("success"), str(d)[:160])
+check("记住我时响应回带 remember=true", d.get("remember") is True, d.get("remember"))
+check("记住我令牌有效期 = 30 天",
+      d.get("expires_in") == 30 * 24 * 3600, d.get("expires_in"))
+long_token = d.get("token")
+
+check("两种令牌确实不同", short_token and long_token and short_token != long_token)
+
+# 长令牌能正常用
+r = jget("/api/me", long_token)
+check("记住我令牌可正常访问 /api/me",
+      r.status_code == 200 and r.json().get("username") == "记me",
+      f"HTTP {r.status_code} {r.text[:140]}")
+
+# 登出后必须失效 —— 关键是这个黑名单会落盘，
+# 否则服务一重启，登出的长令牌又活过来了
+r = requests.post(f"{BASE}/api/logout", headers={"Authorization": f"Bearer {long_token}"},
+                  timeout=10)
+check("登出接口返回 200", r.status_code == 200, f"HTTP {r.status_code}")
+
+r = jget("/api/me", long_token)
+body = safe_json(r)
+check("登出后长令牌立即失效", r.status_code == 401, f"HTTP {r.status_code}")
+check("失效错误码为 AUTH_REQUIRED", body.get("code") == "AUTH_REQUIRED", str(body)[:140])
+
 # ---------- 汇总 ----------
 print("\n" + "=" * 62)
 print(f"  断言：{PASS} 通过 / {FAIL} 失败  （共 {PASS + FAIL} 条）")

@@ -130,8 +130,48 @@ setTimeout(() => {
   check('doReset() 不含 location.reload',
         !window.doReset.toString().includes('location.reload'));
 
-  // ---- 8. 运行期没有未捕获异常 ----
-  console.log('\n【8】页面脚本运行期无未捕获异常');
+  // ---- 8. 「记住我」 ----
+  console.log('\n【8】记住我：勾选框 + 用户名记忆（密码绝不落本地）');
+  const rm = doc.getElementById('rememberMe');
+  check('登录表单里有「记住我」勾选框', !!rm);
+
+  if (rm) {
+    rm.checked = true;
+    check('isRememberChecked() 能读到勾选状态', window.isRememberChecked() === true);
+    rm.checked = false;
+    check('取消勾选后 isRememberChecked() 为 false', window.isRememberChecked() === false);
+  }
+
+  // 记住用户名的读写
+  window.eval('setRememberedUser("小明")');
+  check('setRememberedUser 后能读回用户名', window.getRememberedUser() === '小明',
+        window.getRememberedUser());
+  check('记住的用户名存在 localStorage.ly_user',
+        window.localStorage.getItem('ly_user') === '小明');
+  check('密码没有被写进 localStorage',
+        !JSON.stringify(window.localStorage).includes('password'),
+        '发现 password 字段');
+
+  window.eval('setRememberedUser("")');
+  check('传空串能清掉记住的用户名', window.getRememberedUser() === '');
+
+  // 主动登出应该连用户名一起忘掉
+  window.eval('localStorage.setItem("ly_token", "fake"); setRememberedUser("小明"); clearAuth(true);');
+  check('clearAuth(true) 会清掉记住的用户名',
+        window.localStorage.getItem('ly_user') === null,
+        String(window.localStorage.getItem('ly_user')));
+  check('clearAuth(true) 也清掉令牌',
+        window.localStorage.getItem('ly_token') === null);
+
+  // 令牌过期导致的被动清理，不该顺手清掉用户名
+  window.eval('localStorage.setItem("ly_token", "fake"); setRememberedUser("小明"); clearAuth();');
+  check('clearAuth() 不带参数时保留用户名（免得重敲）',
+        window.localStorage.getItem('ly_user') === '小明',
+        String(window.localStorage.getItem('ly_user')));
+  window.eval('localStorage.removeItem("ly_token"); setRememberedUser("")');
+
+  // ---- 9. 运行期没有未捕获异常 ----
+  console.log('\n【9】页面脚本运行期无未捕获异常');
   const errs = window.__errs.filter(e => !/Not implemented|Could not parse CSS/.test(e));
   check('无未捕获 JS 异常', errs.length === 0, errs.join(' | '));
 

@@ -43,6 +43,61 @@ def check(label, cond, extra=""):
         print(f"  ✗ {label}  {extra}")
 
 
+# ------------------------------------------------------------
+#  阶段 6：「记住我」跨重启
+# ------------------------------------------------------------
+# 两个要点：
+#   1. 30 天长令牌在重启后仍然有效（靠 .secret_key 落盘）
+#   2. 登出黑名单在重启后仍然记得（靠 revoked_tokens 落盘）
+#      —— 这条最关键：不落盘的话，30 天令牌登出后一重启又活了
+
+PHASE_REMEMBER_A = r'''
+import sys, json, os
+sys.path.insert(0, "backend")
+import app, auth
+st = app.state
+
+addr = st.get_account("remuser")
+app.chain_tx(st.market.functions.register("记住我"), addr)
+st.set_credentials("remuser", "Remember123")
+st.save_meta()
+
+long_token = auth.create_token("remuser", ttl=auth.REMEMBER_TTL)
+doomed = auth.create_token("remuser")      # 这个马上登出
+st.revoke_token(doomed)
+
+json.dump({"long_token": long_token, "doomed": doomed,
+           "revoked_count": len(st.revoked_tokens)},
+          open(os.environ["REMEMBER_FILE"], "w"))
+print("__RESULT__" + json.dumps({"ok": True, "revoked_count": len(st.revoked_tokens)}))
+'''
+
+
+PHASE_REMEMBER_B = r'''
+import sys, json, os
+sys.path.insert(0, "backend")
+import app, auth
+st = app.state
+
+saved = json.load(open(os.environ["REMEMBER_FILE"]))
+long_token = saved["long_token"]
+doomed = saved["doomed"]
+
+u_long, remain_long = auth.verify_token(long_token)
+u_doomed, _ = auth.verify_token(doomed)
+
+out = {
+    "long_token_valid": u_long == "remuser",
+    "long_remain_days": round(remain_long / 86400, 2),
+    "doomed_in_blacklist": doomed in st.revoked_tokens,
+    "doomed_signature_ok": u_doomed == "remuser",
+    "user_survived": st.is_registered("remuser"),
+    "password_survived": st.check_credentials("remuser", "Remember123"),
+}
+print("__RESULT__" + json.dumps(out))
+'''
+
+
 def run_phase(code: str, data_dir: Path) -> dict:
     """
     在一个全新的 Python 进程里跑一段代码，返回它打印的 JSON 结果。
@@ -329,6 +384,25 @@ print("__RESULT__" + json.dumps(out))
         check("买家余额正确扣减", abs(e["buyer_bal"] - (100 - 4.0)) < 0.01,
               e["buyer_bal"])
         print(f"      买家余额 {e['buyer_bal']:.4f} ETH（期望约 96）")
+
+        # ---------- 【6】「记住我」跨重启 ----------
+        print("\n【6】记住我：长令牌与登出黑名单跨重启")
+        remember_file = tmp / "remember.json"
+        os.environ["REMEMBER_FILE"] = str(remember_file)
+
+        f = run_phase(PHASE_REMEMBER_A, data_dir)
+        check("登出后已记入黑名单", f["revoked_count"] >= 1, f)
+
+        g = run_phase(PHASE_REMEMBER_B, data_dir)
+        check("重启后账号仍在", g["user_survived"], g)
+        check("重启后密码仍能校验", g["password_survived"], g)
+        check("30 天令牌重启后仍有效", g["long_token_valid"], g)
+        check("令牌剩余约 30 天", 29 <= g["long_remain_days"] <= 30,
+              g["long_remain_days"])
+        check("登出的令牌仍在黑名单里（关键）", g["doomed_in_blacklist"], g)
+        # 签名本身是好的，说明拦下它的是黑名单而不是签名失效
+        check("该令牌签名本身有效（是黑名单拦的）", g["doomed_signature_ok"], g)
+        print(f"      剩余 {g['long_remain_days']} 天")
 
     except Exception as exc:
         global FAIL

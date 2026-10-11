@@ -291,8 +291,9 @@ class AppState:
         self.nicknames = {}
         # 用户名 → 密码哈希（scrypt，绝不存明文）
         self.credentials = {}
-        # token → 用户名（用于登出时主动作废）
-        self.revoked_tokens = set()
+        # 已登出、但还没过期的 token 黑名单：{token: 过期时间戳}
+        # 记过期时间是为了能自动清理 —— 过了期自然就无效了，没必要一直存着。
+        self.revoked_tokens = {}
         self.boot()
 
     # ============================================================
@@ -340,6 +341,14 @@ class AppState:
         self.nicknames = dict(meta.get("nicknames") or {})
         self.user_sessions = dict(meta.get("user_sessions") or {})
 
+        # 已登出令牌的黑名单。顺手丢掉已经自然过期的 —— 到点了本来就无效，
+        # 留着只会让文件越来越大。
+        now = int(__import__("time").time())
+        self.revoked_tokens = {
+            t: exp for t, exp in (meta.get("revoked_tokens") or {}).items()
+            if not exp or exp > now
+        }
+
         # 快照里的地址必须在链上确实存在，否则是脏数据
         valid = set(self.accounts)
         for u in list(self.user_sessions):
@@ -370,7 +379,7 @@ class AppState:
 
         self.user_sessions = {}
         self.nicknames = {}
-        self.revoked_tokens = set()
+        self.revoked_tokens = {}
         if wipe_credentials:
             self.credentials = {}
             auth.clear_all_failures()
@@ -459,6 +468,8 @@ class AppState:
                 "credentials": self.credentials,
                 "nicknames": self.nicknames,
                 "user_sessions": self.user_sessions,
+                # 已登出的令牌黑名单（含过期时间，加载时会自动清理过期项）
+                "revoked_tokens": self.revoked_tokens,
                 "num_accounts": len(self.accounts),
                 "saved_at": datetime.now().isoformat(timespec="seconds"),
             }
@@ -516,6 +527,24 @@ class AppState:
     def is_registered(self, username: str) -> bool:
         """是否已注册（有密码凭据即视为已注册）"""
         return username in self.credentials
+
+    def revoke_token(self, token: str):
+        """
+        把 token 加进黑名单（登出时调用）。
+
+        连带记下它的过期时间：到点了就没必要再留着，
+        否则 30 天期的「记住我」令牌会让这个名单无限增长。
+        """
+        self.revoked_tokens[token] = auth.token_expiry(token)
+        self.save_meta()
+        self._prune_revoked()
+
+    def _prune_revoked(self):
+        """清掉黑名单里已经自然过期的条目"""
+        now = int(__import__("time").time())
+        stale = [t for t, exp in self.revoked_tokens.items() if exp and exp <= now]
+        for t in stale:
+            del self.revoked_tokens[t]
 
     def set_credentials(self, username: str, password: str):
         self.credentials[username] = auth.hash_password(password)
@@ -723,6 +752,8 @@ def api_register():
     username = (data.get("username") or "").strip()
     nickname = (data.get("nickname") or "").strip() or username
     password = data.get("password") or ""
+    # 「记住我」同样适用于注册（注册后直接进入，理应保持登录态）
+    remember = bool(data.get("remember"))
 
     # ---- 输入校验 ----
     if not username:
@@ -776,7 +807,8 @@ def api_register():
     state.set_credentials(username, password)
     state.nicknames[username] = nickname
     auth.clear_failures(username)
-    token = auth.create_token(username)
+    ttl = auth.REMEMBER_TTL if remember else auth.TOKEN_TTL
+    token = auth.create_token(username, ttl=ttl)
     state.save_meta()      # 昵称 + 地址映射落盘
 
     return jsonify({
@@ -785,7 +817,8 @@ def api_register():
         "nickname": nickname,
         "address": addr,
         "token": token,
-        "expires_in": auth.TOKEN_TTL,
+        "expires_in": ttl,
+        "remember": remember,
     })
 
 
@@ -802,6 +835,8 @@ def api_login():
     data = request.get_json() or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
+    # 「记住我」：签发一个 30 天的长令牌，关掉浏览器第二天打开仍然是登录状态
+    remember = bool(data.get("remember"))
 
     if not username or not password:
         return jsonify({"success": False, "error": "请输入用户名和密码"}), 400
@@ -825,7 +860,8 @@ def api_login():
 
     # ---- 成功 ----
     auth.clear_failures(username)
-    token = auth.create_token(username)
+    ttl = auth.REMEMBER_TTL if remember else auth.TOKEN_TTL
+    token = auth.create_token(username, ttl=ttl)
     # 链重置会清掉地址映射，这里顺手补发，避免"登录成功却没有链上身份"
     addr = state.ensure_account(username)
 
@@ -835,17 +871,24 @@ def api_login():
         "nickname": state.display_name(username),
         "address": addr,
         "token": token,
-        "expires_in": auth.TOKEN_TTL,
+        "expires_in": ttl,
+        "remember": remember,
     })
 
 
 @app.route("/api/logout", methods=["POST"])
 @require_auth
 def api_logout():
-    """登出：把当前 token 加入黑名单"""
+    """
+    登出：把当前 token 加入黑名单。
+
+    黑名单现在会落盘（见 save_meta）。以前它只在内存里，
+    服务一重启就忘了谁登出过 —— 2 小时的短令牌问题不大，
+    但「记住我」是 30 天，不落盘的话登出等于没登出。
+    """
     token = extract_token()
     if token:
-        state.revoked_tokens.add(token)
+        state.revoke_token(token)
     return jsonify({"success": True, "message": "已安全退出"})
 
 

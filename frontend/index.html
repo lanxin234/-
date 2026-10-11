@@ -387,6 +387,22 @@
   }
   .pwd-toggle:hover { background: var(--bg); color: var(--text); }
 
+  /* 「记住我」勾选行 */
+  .remember-row {
+    display: flex; align-items: center; gap: 8px;
+    margin: -4px 0 14px;
+    font-size: 12.5px; color: var(--text-2);
+    cursor: pointer; user-select: none;
+    width: fit-content;
+  }
+  .remember-row input {
+    width: 15px; height: 15px; margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  .remember-row:hover { color: var(--text); }
+  .remember-row .rm-hint { color: var(--text-3); font-size: 11.5px; }
+
   .auth-strength {
     display: flex; align-items: center; gap: 10px;
     margin-top: 9px;
@@ -1409,7 +1425,7 @@
       <div class="auth-icon">🔐</div>
       <div>
         <div class="auth-title" id="authTitle">登录链易</div>
-        <div class="auth-sub" id="authSub">密码经 scrypt 加盐哈希存储，令牌 2 小时自动过期</div>
+        <div class="auth-sub" id="authSub">密码经 scrypt 加盐哈希存储，勾选「记住我」可 30 天免登录</div>
       </div>
     </div>
 
@@ -1430,6 +1446,12 @@
         </div>
         <div class="field-tip" id="pwdTip"></div>
       </div>
+
+      <label class="remember-row" for="rememberMe">
+        <input type="checkbox" id="rememberMe">
+        <span>记住我</span>
+        <span class="rm-hint">30 天内免登录</span>
+      </label>
 
       <div class="field" id="nicknameField" style="display:none;margin-bottom:14px">
         <label>昵称<span style="color:var(--text-3);font-weight:400">（可选，默认与用户名相同）</span></label>
@@ -1454,7 +1476,7 @@
     </div>
 
     <div class="auth-note">
-      <span>💡 演示提示：本平台密码只存在后端内存，重启后需重新注册</span>
+      <span>💡 账号密码会落盘保存，重启服务后直接登录即可，无需重新注册</span>
     </div>
   </div>
 
@@ -2031,9 +2053,10 @@ async function submitAuth(btn) {
 
   const isRegister = state.authMode === 'register';
   const path = isRegister ? '/api/register' : '/api/login';
+  const remember = isRememberChecked();
   const payload = isRegister
-    ? { username, password, nickname: nickname || username }
-    : { username, password };
+    ? { username, password, nickname: nickname || username, remember }
+    : { username, password, remember };
 
   const r = await post(path, payload);
   btnLoading(btnEl, false);
@@ -2052,9 +2075,36 @@ async function submitAuth(btn) {
   state.user = r.username;
   localStorage.setItem('ly_token', r.token);
 
+  // 勾了「记住我」才把用户名留在本地，方便下次直接填好只输密码。
+  // 只存用户名，绝不存密码 —— localStorage 能被 XSS 读到，
+  // 密码一旦明文落在那里，等于把所有账号交了出去。
+  if (remember) {
+    setRememberedUser(username);
+  } else {
+    setRememberedUser('');
+  }
+
   authMsg(isRegister ? '注册成功，正在进入…' : '登录成功，正在进入…', 'ok');
 
   await afterLogin();
+}
+
+/* ---- 「记住我」相关 ---- */
+
+function isRememberChecked() {
+  const el = document.getElementById('rememberMe');
+  return !!(el && el.checked);
+}
+
+function getRememberedUser() {
+  try { return localStorage.getItem('ly_user') || ''; } catch (e) { return ''; }
+}
+
+function setRememberedUser(name) {
+  try {
+    if (name) localStorage.setItem('ly_user', name);
+    else localStorage.removeItem('ly_user');
+  } catch (e) { /* 隐私模式下 localStorage 可能不可用，忽略 */ }
 }
 
 /* 登录成功后的统一收尾 */
@@ -2082,7 +2132,7 @@ function switchAuthMode() {
   document.getElementById('authTitle').textContent = isReg ? '注册新账号' : '登录链易';
   document.getElementById('authSub').textContent = isReg
     ? '密码会用 scrypt 加盐哈希后存储，服务端不保存明文'
-    : '密码经 scrypt 加盐哈希存储，令牌 2 小时自动过期';
+    : '密码经 scrypt 加盐哈希存储，勾选「记住我」可 30 天免登录';
 
   document.getElementById('nicknameField').style.display = isReg ? '' : 'none';
   document.getElementById('strengthBox').style.display = isReg ? 'flex' : 'none';
@@ -2181,7 +2231,7 @@ const AUTH_FORM_TEMPLATE = `
       <div class="auth-icon">🔐</div>
       <div>
         <div class="auth-title" id="authTitle">登录链易</div>
-        <div class="auth-sub" id="authSub">密码经 scrypt 加盐哈希存储，令牌 2 小时自动过期</div>
+        <div class="auth-sub" id="authSub">密码经 scrypt 加盐哈希存储，勾选「记住我」可 30 天免登录</div>
       </div>
     </div>
 
@@ -2202,6 +2252,12 @@ const AUTH_FORM_TEMPLATE = `
         </div>
         <div class="field-tip" id="pwdTip"></div>
       </div>
+
+      <label class="remember-row" for="rememberMe">
+        <input type="checkbox" id="rememberMe">
+        <span>记住我</span>
+        <span class="rm-hint">30 天内免登录</span>
+      </label>
 
       <div class="field" id="nicknameField" style="display:none;margin-bottom:14px">
         <label>昵称<span style="color:var(--text-3);font-weight:400">（可选，默认与用户名相同）</span></label>
@@ -2226,7 +2282,7 @@ const AUTH_FORM_TEMPLATE = `
     </div>
 
     <div class="auth-note">
-      <span>💡 演示提示：本平台密码只存在后端内存，重启后需重新注册</span>
+      <span>💡 账号密码会落盘保存，重启服务后直接登录即可，无需重新注册</span>
     </div>`;
 
 /**
@@ -2256,6 +2312,16 @@ function bindAuthForm() {
       else if (new Set(v).size === 1) { tip.className = 'field-tip err'; tip.textContent = '不能是重复的同一个字符'; }
       else { tip.className = 'field-tip ok'; tip.textContent = '格式符合要求'; }
     });
+  }
+
+  // 上次勾过「记住我」：把用户名填回去，勾选框也保持勾上。
+  // 只填用户名，密码留空 —— 密码不落本地，这是底线。
+  const remembered = getRememberedUser();
+  if (remembered) {
+    const nameEl = document.getElementById('loginName');
+    if (nameEl && !nameEl.value) nameEl.value = remembered;
+    const rmEl = document.getElementById('rememberMe');
+    if (rmEl) rmEl.checked = true;
   }
 
   // 重建后如果本来是"注册模式"，UI 要跟着回到注册态
@@ -2289,18 +2355,24 @@ function renderAuthForm() {
 async function doLogout(btn) {
   if (btn) btnLoading(btn, true);
   await post('/api/logout');
-  clearAuth();
+  clearAuth(true);          // 主动退出 → 连记住的用户名一起忘掉
   // 原地还原登录表单，用户可以直接换账号登录，不必手动刷新
   renderAuthForm();
   setAuthHint('已安全退出，可切换其他账号登录', 'info');
   refreshAll();
 }
 
-function clearAuth() {
+/**
+ * 清空登录态。
+ * forgetUser=true 时连记住的用户名一起删（主动登出时用）。
+ * 令牌过期导致的被动清理不动用户名 —— 否则用户还得重新敲一遍用户名。
+ */
+function clearAuth(forgetUser) {
   state.token = null;
   state.user = null;
   state.info = null;
   localStorage.removeItem('ly_token');
+  if (forgetUser) setRememberedUser('');
 }
 
 /* 页面加载时用本地 token 恢复登录态 */
