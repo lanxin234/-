@@ -129,9 +129,19 @@ time.sleep(0.3)
 
 tokens = []
 pool_full_seen = False
-# 池子共 9 个用户账户，注册到第 10 个必然用尽
-for i in range(1, 12):
-    uname = f"pool{i:02d}"
+
+# 先问清楚这条链到底能注册多少人，再决定试多少次。
+# 之前写死"9 个用户"，后来把账户数提到 200 就永远触发不了池满，
+# 所以改成动态：注册到返回 ACCOUNT_POOL_FULL 为止，上限留足余量。
+try:
+    _st = requests.get(f"{BASE}/api/status", timeout=10).json()
+    capacity = int(_st.get("accounts_count", 10)) - 1
+except Exception:
+    capacity = 9
+max_tries = max(12, capacity + 5)
+
+for i in range(1, max_tries + 1):
+    uname = f"pool{i:03d}"
     r = jpost("/api/register", {"username": uname, "password": "Pool9999"})
     d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     if d.get("success"):

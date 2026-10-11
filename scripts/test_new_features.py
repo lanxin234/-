@@ -170,6 +170,18 @@ if items:
     check("详情接口 image_hash 正确", d["item"].get("image_hash") == h1)
     check("详情接口含完整时间", bool(d["item"].get("created_full")), d["item"].get("created_full"))
 
+# ---- 分类接口 ----
+# 这里曾有个线上 bug：decode_description 返回 3 个值，却写成
+# `cat, _ = ...`，只要库里有商品就抛 ValueError，接口直接 500。
+# 加断言锁住，防止再犯。
+c = requests.get(f"{BASE}/api/categories")
+check("分类接口返回 200", c.status_code == 200, f"HTTP {c.status_code}")
+if c.status_code == 200:
+    body = c.json()
+    check("分类接口返回 categories", bool(body.get("categories")), str(body)[:200])
+    check("数码电子计数 >= 1", body.get("counts", {}).get("数码电子", 0) >= 1,
+          str(body.get("counts"))[:200])
+
 # ---------------------------------------------------------------
 print("\n【功能2】交易时间线")
 # ---------------------------------------------------------------

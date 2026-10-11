@@ -1,21 +1,30 @@
 """
 区块链二手交易平台 —— 后端服务
 
-技术：Flask + web3.py
+技术：Flask + web3.py + py-evm（链数据落盘到 SQLite）
 职责：
-  1. 启动时编译部署合约到本地链
+  1. 启动时编译部署合约到本地链（已有链数据则直接续用）
   2. 提供 REST API 供前端调用
-  3. 管理测试账户（每个账户代表一个用户）
+  3. 管理链上账户（每个注册用户分配一个）
 
 运行：
   C:/Users/25191/.venvs/base/Scripts/python.exe backend/app.py
 
 然后浏览器打开 http://127.0.0.1:5000
+同一局域网内的其他设备用「本机局域网 IP:5000」访问。
+
+持久化：
+  链（区块/交易/事件日志/合约存储）→ data/chain.sqlite3
+  业务数据（账号、昵称、用户↔地址映射）→ data/app_state.json
+  两者都在，重启后数据原样续用；删掉它们等于恢复出厂。
 """
 
 import json
+import os
 import sys
+import socket
 import hashlib
+import threading
 import re
 from functools import wraps
 from pathlib import Path
@@ -27,6 +36,7 @@ from web3.providers.eth_tester import EthereumTesterProvider
 from solcx import compile_standard, install_solc, get_installed_solc_versions
 
 import auth
+import chaindb
 
 # ============================================================
 #  路径配置
@@ -39,6 +49,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 FRONTEND_DIR = ROOT / "frontend"
 BUILD_DIR = ROOT / "build"
 SOLC_VERSION = "0.8.19"
+
+# 运行时数据目录（链数据库 + 业务快照）
+# 可用环境变量 MARKET_DATA_DIR 整体挪走（自动化测试需要隔离）
+DATA_DIR = Path(os.environ.get("MARKET_DATA_DIR") or (ROOT / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+STATE_FILE = DATA_DIR / "app_state.json"
 
 # ============================================================
 #  中文错误映射
@@ -98,10 +114,22 @@ def friendly_error(e: Exception) -> str:
 CATEGORIES = ["数码电子", "图书教材", "生活用品", "运动户外", "服饰鞋包", "其他"]
 CATEGORY_PREFIX = "[分类]"
 
-# 每个测试账户的初始余额。
+# 每个链上账户的初始余额，直接写进创世状态。
 # eth-tester 默认给 100 万 ETH，读数太长不便演示；商品价格区间是
 # 0.05 ~ 3.2 ETH，100 ETH 足够买卖几十次。
 INITIAL_BALANCE_ETH = 100
+
+# 链上账户总数：第 1 个留给平台方，其余分配给注册用户。
+# 之前固定 10 个（只能注册 9 人），局域网给同学用根本不够，
+# 提到 200（199 位用户）。可用环境变量 CHAIN_ACCOUNTS 覆盖。
+#
+# 注意：改这个数字只对新链生效。已有链要改的话，删掉 data/ 目录即可。
+NUM_CHAIN_ACCOUNTS = int(os.environ.get("CHAIN_ACCOUNTS") or 200)
+
+# 链本身不是线程安全的（chain.header、mine_block 都在改共享状态）。
+# waitress 是多线程的，两个人同时下单就可能把链改乱，
+# 所以所有上链操作统一走这把锁串行化。
+CHAIN_LOCK = threading.RLock()
 
 
 def encode_description(category: str, description: str, image_hash: str = "") -> str:
@@ -265,18 +293,81 @@ class AppState:
         self.credentials = {}
         # token → 用户名（用于登出时主动作废）
         self.revoked_tokens = set()
-        self.reset()
+        self.boot()
 
-    def reset(self, wipe_credentials: bool = False):
-        """重置整个链，回到初始状态。
+    # ============================================================
+    #  启动：有数据就续用，没有就新建
+    # ============================================================
+
+    def boot(self):
+        """
+        启动时决定"续用旧链"还是"新建一条链"。
+
+        链数据落盘后，重启不该从头开始 —— 否则"持久化"就没意义了。
+        判断依据有两个，缺一不可：
+          1. data/chain.sqlite3 存在（链本体在）
+          2. data/app_state.json 里记着合约地址（知道该连哪个合约）
+        """
+        chaindb.install()          # 必须在建链之前把后端切成 SQLite
+
+        if not chaindb.db_exists():
+            print("  未发现链数据，正在创建一条新链...")
+            self.init_chain()
+            return
+
+        meta = self._load_meta()
+        if not meta:
+            print("  ! 链数据存在但缺少元信息，重新初始化")
+            self.init_chain()
+            return
+
+        try:
+            self._attach(meta)
+        except Exception as e:
+            print(f"  ! 加载已有链失败（{e}），回退为重新初始化")
+            self.init_chain()
+
+    def _attach(self, meta: dict):
+        """重开已有链：复用保存下来的合约地址，不重新部署"""
+        self.abi, _ = compile_contract()
+        self.w3 = self._build_w3()
+        self.accounts = self.w3.eth.accounts
+
+        self.contract_address = meta["contract_address"]
+        self.market = self.w3.eth.contract(address=self.contract_address, abi=self.abi)
+
+        self.credentials = dict(meta.get("credentials") or {})
+        self.nicknames = dict(meta.get("nicknames") or {})
+        self.user_sessions = dict(meta.get("user_sessions") or {})
+
+        # 快照里的地址必须在链上确实存在，否则是脏数据
+        valid = set(self.accounts)
+        for u in list(self.user_sessions):
+            if self.user_sessions[u] not in valid:
+                del self.user_sessions[u]
+
+        # 确认合约还在（链库和元信息对不上时直接报错，让 boot 回退重建）
+        code = self.w3.eth.get_code(self.contract_address)
+        if not code or len(code) == 0:
+            raise RuntimeError(f"合约地址 {self.contract_address} 上没有代码")
+
+        print(f"  ✓ 已加载已有链：{len(self.accounts)} 个账户，"
+              f"区块高度 {self.w3.eth.block_number}")
+        print(f"  ✓ 合约地址：{self.contract_address}")
+        print(f"  ✓ 已注册用户 {len(self.credentials)} 位")
+
+    def init_chain(self, wipe_credentials: bool = False):
+        """新建一条链（会删掉旧的链数据，回到出厂状态）。
 
         参数:
           wipe_credentials -- 是否同时清空账号密码。
             - False（默认）：保留 credentials。链重置后老账号能直接登录，
-              不用重新注册，方便演示。代价是用户名仍被占用。
+              不用重新注册。代价是用户名仍被占用。
             - True：连账号一起清空，回到完全干净的状态。自动化测试脚本
               需要反复用同一批用户名注册时用这个。
         """
+        chaindb.clear_db()
+
         self.user_sessions = {}
         self.nicknames = {}
         self.revoked_tokens = set()
@@ -292,16 +383,11 @@ class AppState:
         self.abi, bytecode = compile_contract()
         print("  ✓ 编译完成")
 
-        print("  正在启动本地测试链...")
-        self.w3 = Web3(EthereumTesterProvider())
+        print(f"  正在创建链（{NUM_CHAIN_ACCOUNTS} 个账户，数据落盘）...")
+        self.w3 = self._build_w3()
         self.accounts = self.w3.eth.accounts
-        print(f"  ✓ 测试链启动，{len(self.accounts)} 个账户")
-
-        # ---- 调整初始余额：把每个账户的余额统一设为 100 ETH ----
-        # eth-tester 默认给每个账户 100 万测试 ETH，数字太大不便于演示
-        # （例如"余额 999999.99"这种读数毫无意义）。改成 100 ETH，
-        # 覆盖商品价格区间（0.05 ~ 3.2 ETH）绰绰有余，演示时数字也直观。
-        self._set_initial_balances(INITIAL_BALANCE_ETH)
+        print(f"  ✓ 链已创建：{len(self.accounts)} 个账户，"
+              f"每个初始 {INITIAL_BALANCE_ETH:g} ETH")
 
         print("  正在部署合约...")
         contract = self.w3.eth.contract(abi=self.abi, bytecode=bytecode)
@@ -311,65 +397,94 @@ class AppState:
         self.market = self.w3.eth.contract(address=self.contract_address, abi=self.abi)
         print(f"  ✓ 合约已部署：{self.contract_address}")
 
-    def _set_initial_balances(self, target_eth: float):
+        self.save_meta()
+
+    def _build_w3(self):
         """
-        把链上所有账户的余额统一设定为 target_eth。
+        建（或重开）一条 SQLite 落盘的链。
 
-        eth-tester 默认给每个账户 100 万测试 ETH，演示时读数太长。
-        商品价格区间是 0.05 ~ 3.2 ETH，100 ETH 足够买卖几十次。
+        初始余额直接写进创世状态 —— 这样就不必像早期版本那样，
+        建完链再去改 py-evm 的底层账户 trie（那套 hack 依赖内部实现，
+        换个 py-evm 版本就可能失效）。
 
-        为什么不用转账：转账要付 gas，每笔都会让余额差出零点零零几 ETH；
-        来回转账还会把中间账户的余额堆到离谱的量级。
+        重开时传入同样的 genesis_state 是安全的：创世块是确定性生成的，
+        重复写入不会把链头拉回 0（已实测验证）。
+        """
+        from eth_tester import EthereumTester, PyEVMBackend
+        from eth_tester.backends.pyevm.main import (
+            generate_genesis_state_for_keys,
+            get_default_account_keys,
+        )
 
-        实现方式（直接改写底层状态，需要穿透 py-evm 的几层封装）：
-          1. 在账户 trie 里写入新的 Account（余额改成目标值）
-          2. 把 trie 的节点从 journal 层落盘到 MemoryDB
-             （trie 写进的是 BatchDB，不落盘的话新状态读不到）
-          3. 把新 root hash 写进当前区块头，再 mine 一个块固定下来
+        keys = get_default_account_keys(quantity=NUM_CHAIN_ACCOUNTS)
+        genesis_state = generate_genesis_state_for_keys(
+            keys, overrides={"balance": INITIAL_BALANCE_ETH * 10**18}
+        )
+        backend = PyEVMBackend(genesis_state=genesis_state)
+        return Web3(EthereumTesterProvider(EthereumTester(backend)))
 
-        注意：这会产生 1 个区块，所以必须在部署合约之前调用，
-        之后的区块记录才是干净的。
+    def reset(self, wipe_credentials: bool = False):
+        """重置整条链，回到初始状态（= 删数据 + 新建）"""
+        self.init_chain(wipe_credentials=wipe_credentials)
+
+    # ============================================================
+    #  业务数据落盘
+    # ============================================================
+
+    def _load_meta(self):
+        """读取业务快照；不存在或损坏则返回 None"""
+        try:
+            if not STATE_FILE.exists():
+                return None
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if not meta.get("contract_address"):
+                return None
+            return meta
+        except Exception as e:
+            print(f"  ! 读取 {STATE_FILE.name} 失败（{e}），将重新初始化")
+            return None
+
+    def save_meta(self):
+        """
+        把业务侧数据落盘：账号哈希、昵称、用户↔地址映射、合约地址。
+
+        写临时文件再原子替换 —— 避免写一半崩掉留下半个 JSON，
+        那样下次启动就读不出来、整条链白建了。
         """
         try:
-            import rlp
-            from eth_utils import to_canonical_address
-            from eth.rlp.accounts import Account
-
-            chain = self.w3.provider.ethereum_tester.backend.chain
-            account_db = chain.get_vm().state._account_db
-            target_wei = self.w3.to_wei(target_eth, "ether")
-
-            # 1) 改写每个账户在 trie 里的余额
-            for addr in self.accounts:
-                canonical = to_canonical_address(addr)
-                account = account_db._get_account(canonical)
-                account_db._trie[canonical] = rlp.encode(
-                    account.copy(balance=target_wei), sedes=Account
-                )
-
-            new_root = account_db._trie.root_hash
-
-            # 2) 落盘：trie 的改动堆在 BatchDB（journal）里，要手动 flush
-            batch_db = account_db._trie.db
-            memory_db = batch_db.wrapped_db.wrapped_db.wrapped_db
-            batch_db.diff().apply_to(memory_db)
-
-            # 3) 固定到区块头并出块
-            chain.header = chain.header.copy(state_root=new_root)
-            chain.mine_block()
-
-            print(f"  ✓ 初始余额已设为 {target_eth:g} ETH/账户")
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            meta = {
+                "contract_address": self.contract_address,
+                "credentials": self.credentials,
+                "nicknames": self.nicknames,
+                "user_sessions": self.user_sessions,
+                "num_accounts": len(self.accounts),
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            tmp = STATE_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            tmp.replace(STATE_FILE)
         except Exception as e:
-            # 兜底：改不动就跳过（不影响主流程，只是余额仍是默认的 100 万）
-            print(f"  ! 设定初始余额失败（{type(e).__name__}: {e}），沿用默认余额")
+            print(f"  ! 保存 {STATE_FILE.name} 失败：{e}")
+
+    # ============================================================
+    #  账户分配
+    # ============================================================
+
+    @property
+    def max_users(self) -> int:
+        """最多能注册多少用户（第 1 个账户留给平台方）"""
+        return max(0, len(self.accounts) - 1)
 
     def get_account(self, username: str) -> str:
-        """根据用户名获取账户地址（简化版登录：用户名 → 分配一个测试账户）"""
+        """根据用户名获取账户地址（用户名 → 分配一个链上账户）"""
         if username not in self.user_sessions:
             # 按注册顺序分配账户，跳过 accounts[0]（平台账户）
             idx = len(self.user_sessions) + 1
             if idx >= len(self.accounts):
-                raise ValueError("测试账户已用完（最多9个用户）")
+                raise ValueError(f"链上账户已用完（本链最多 {self.max_users} 位用户）")
             self.user_sessions[username] = self.accounts[idx]
         return self.user_sessions[username]
 
@@ -393,7 +508,7 @@ class AppState:
         try:
             return self.get_account(username)
         except ValueError:
-            # 账户池满了（本链最多 9 个用户）
+            # 账户池满了
             return None
 
     # ---- 认证相关 ----
@@ -404,6 +519,7 @@ class AppState:
 
     def set_credentials(self, username: str, password: str):
         self.credentials[username] = auth.hash_password(password)
+        self.save_meta()      # 立刻落盘，避免重启后账号"消失"
 
     def check_credentials(self, username: str, password: str) -> bool:
         stored = self.credentials.get(username)
@@ -416,6 +532,26 @@ class AppState:
 
 
 state = AppState()
+
+
+def chain_tx(contract_call, from_addr: str, value: int = None) -> dict:
+    """
+    发送一笔链上交易并等回执。
+
+    所有写操作都必须走这里，原因有两个：
+      1. 链不是线程安全的。waitress 多线程，两个人同时下单会让
+         chain.header 和 mine_block 打架，状态直接错乱。
+      2. 统一在这里等回执，调用方拿到的就是已确认的结果。
+
+    value -- 随交易发送的 ETH（买家付款时用）
+    """
+    with CHAIN_LOCK:
+        params = {"from": from_addr}
+        if value is not None:
+            params["value"] = value
+        tx = contract_call.transact(params)
+        return state.w3.eth.wait_for_transaction_receipt(tx)
+
 
 # ============================================================
 #  Flask 应用
@@ -491,7 +627,7 @@ def require_auth(view):
         if state.addr_of(username) is None and state.ensure_account(username) is None:
             return jsonify({
                 "success": False,
-                "error": "演示账户已用完（本链最多支持 9 位用户）。请重置整条链后再试",
+                "error": f"链上账户已用完（本链最多 {state.max_users} 位用户）。请重置整条链后再试",
                 "code": "ACCOUNT_POOL_FULL",
             }), 503
 
@@ -603,18 +739,21 @@ def api_register():
     if state.is_registered(username):
         return jsonify({"success": False, "error": "这个用户名已经被注册了，换一个或直接登录"}), 409
 
+    pool_msg = (f"链上账户已用完（本链最多 {state.max_users} 位用户）。"
+                f"点「区块链浏览 → 重置整条链」可清空重置")
+
     # ---- 链上注册 ----
     try:
         addr = state.get_account(username)
     except ValueError:
         return jsonify({
             "success": False,
-            "error": "演示账户已用完（本链最多支持 9 位用户）。点「区块链浏览 → 重置整条链」可清空重置",
+            "error": pool_msg,
             "code": "ACCOUNT_POOL_FULL",
         }), 503
 
     try:
-        state.market.functions.register(nickname).transact({"from": addr})
+        chain_tx(state.market.functions.register(nickname), addr)
     except Exception:
         # 如果链上已注册（比如链重置前注册过），尝试换一个账户
         try:
@@ -623,11 +762,11 @@ def api_register():
                 raise ValueError("pool full")
             addr = state.accounts[idx]
             state.user_sessions[username] = addr
-            state.market.functions.register(nickname).transact({"from": addr})
+            chain_tx(state.market.functions.register(nickname), addr)
         except ValueError:
             return jsonify({
                 "success": False,
-                "error": "演示账户已用完（本链最多支持 9 位用户）。点「区块链浏览 → 重置整条链」可清空重置",
+                "error": pool_msg,
                 "code": "ACCOUNT_POOL_FULL",
             }), 503
         except Exception as e2:
@@ -638,6 +777,7 @@ def api_register():
     state.nicknames[username] = nickname
     auth.clear_failures(username)
     token = auth.create_token(username)
+    state.save_meta()      # 昵称 + 地址映射落盘
 
     return jsonify({
         "success": True,
@@ -957,7 +1097,7 @@ def api_new_item():
     encoded_desc = encode_description(category, description, image_hash)
 
     try:
-        state.market.functions.listItem(name, encoded_desc, price_wei).transact({"from": addr})
+        chain_tx(state.market.functions.listItem(name, encoded_desc, price_wei), addr)
     except Exception as e:
         return jsonify({"success": False, "error": friendly_error(e)}), 400
 
@@ -1038,7 +1178,10 @@ def api_categories():
     counts = {c: 0 for c in CATEGORIES}
     for i in range(1, count + 1):
         raw = state.market.functions.getItem(i).call()
-        cat, _ = decode_description(raw[2])
+        # 注意 decode_description 返回 3 个值（分类、图片哈希、纯描述）。
+        # 这里曾写成 `cat, _ = ...`，一旦有商品就抛 ValueError，
+        # 整个 /api/categories 直接 500（分类筛选功能等于废了）。
+        cat, _, _ = decode_description(raw[2])
         counts[cat] = counts.get(cat, 0) + 1
     return jsonify({"success": True, "categories": CATEGORIES, "counts": counts})
 
@@ -1105,9 +1248,7 @@ def api_buy():
     try:
         item = state.market.functions.getItem(int(item_id)).call()
         price = item[3]
-        state.market.functions.buyItem(int(item_id)).transact({
-            "from": addr, "value": price
-        })
+        chain_tx(state.market.functions.buyItem(int(item_id)), addr, value=price)
     except Exception as e:
         return jsonify({"success": False, "error": friendly_error(e)}), 400
 
@@ -1134,7 +1275,7 @@ def api_confirm():
         }), 503
 
     try:
-        state.market.functions.confirmReceived(int(item_id)).transact({"from": addr})
+        chain_tx(state.market.functions.confirmReceived(int(item_id)), addr)
     except Exception as e:
         return jsonify({"success": False, "error": friendly_error(e)}), 400
 
@@ -1157,7 +1298,7 @@ def api_remove():
         }), 503
 
     try:
-        state.market.functions.removeItem(int(item_id)).transact({"from": addr})
+        chain_tx(state.market.functions.removeItem(int(item_id)), addr)
     except Exception as e:
         return jsonify({"success": False, "error": friendly_error(e)}), 400
 
@@ -1197,7 +1338,7 @@ def api_rate():
         return jsonify({"success": False, "error": f"用户 {target} 不存在"}), 400
 
     try:
-        state.market.functions.rate(int(item_id), target_addr, score_int).transact({"from": addr})
+        chain_tx(state.market.functions.rate(int(item_id), target_addr, score_int), addr)
     except Exception as e:
         return jsonify({"success": False, "error": friendly_error(e)}), 400
 
@@ -1566,25 +1707,88 @@ def api_dashboard():
 #  启动
 # ============================================================
 
-if __name__ == "__main__":
+
+def lan_addresses(port: int):
+    """
+    列出本机在局域网里的 IP，供其他设备访问。
+
+    用两个办法取，互为补充：
+      1. 连一下外部地址（不真发包），看本机用的是哪块网卡 —— 最准
+      2. 解析主机名 —— 有多块网卡（比如装了虚拟机）时能补全
+    """
+    found = []
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip:
+            found.append(ip)
+    except Exception:
+        pass
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in found and not ip.startswith("127."):
+                found.append(ip)
+    except Exception:
+        pass
+
+    return [f"http://{ip}:{port}" for ip in found]
+
+
+def print_banner(port: int):
     print()
     print("=" * 64)
     print("  区块链二手交易平台 —— 后端服务")
     print("=" * 64)
     print()
-
-    print(f"  合约地址：{state.contract_address}")
-    print(f"  前端地址：http://127.0.0.1:5000")
+    print(f"  合约地址  {state.contract_address}")
+    print(f"  链账户数  {len(state.accounts)}（可注册用户 {state.max_users} 位）")
+    print(f"  已注册    {len(state.credentials)} 位")
+    print(f"  区块高度  {state.w3.eth.block_number}")
+    print(f"  数据目录  {DATA_DIR}")
     print()
-    print("  测试账户：")
-    for i, a in enumerate(state.accounts[:4]):
-        bal = state.w3.from_wei(state.w3.eth.get_balance(a), "ether")
-        label = "平台方" if i == 0 else f"用户{i}"
-        print(f"    [{label}] {a}  余额 {bal} ETH")
-    print()
-    print("=" * 64)
-    print("  按 Ctrl+C 停止服务")
-    print("=" * 64)
+    print("  本机访问：")
+    print(f"    http://127.0.0.1:{port}")
     print()
 
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    others = lan_addresses(port)
+    if others:
+        print("  同一局域网（同学/手机）访问：")
+        for url in others:
+            print(f"    {url}")
+        print()
+        print("  访问不了？多半是防火墙拦了端口。用管理员权限跑一次：")
+        print(f"    netsh advfirewall firewall add rule name=\"BlockchainMarket\" "
+              f"dir=in action=allow protocol=TCP localport={port}")
+    else:
+        print("  ! 没检测到局域网 IP，其他设备可能访问不了")
+
+    print()
+    print("=" * 64)
+    print("  按 Ctrl+C 停止服务（数据已落盘，下次启动原样续用）")
+    print("=" * 64)
+    print()
+
+
+if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT") or 5000)
+    HOST = os.environ.get("HOST") or "0.0.0.0"
+
+    print_banner(PORT)
+
+    # waitress：纯 Python 的多线程 WSGI 服务器。
+    # 不用 Flask 自带的开发服务器 —— 它单线程、并发一高就卡，
+    # 而且 Flask 官方明确说不要用于生产。
+    # （gunicorn 在 Windows 上跑不了，所以选 waitress）
+    try:
+        from waitress import serve
+
+        serve(app, host=HOST, port=PORT, threads=8)
+    except ImportError:
+        print("  ! 未安装 waitress，退回 Flask 开发服务器（并发能力较差）")
+        print("    建议执行：uv pip install waitress")
+        app.run(host=HOST, port=PORT, debug=False, threaded=True)

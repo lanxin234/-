@@ -1822,7 +1822,7 @@ async function api(path, opts) {
         toast('登录已过期，请重新登录', 'warn');
       } else if (data.code === 'ACCOUNT_POOL_FULL') {
         setAuthHint('演示账户已用完，请重置整条链', 'error');
-        toast('演示账户已用完（最多 9 个用户），请重置整条链', 'error');
+        toast(r.error || '演示账户已用完，请重置整条链', 'error');
       }
       return data;
     }
