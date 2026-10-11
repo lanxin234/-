@@ -1,5 +1,6 @@
 # 区块链二手交易平台 —— 依赖清单
-# 安装：export VIRTUAL_ENV="C:/Users/25191/.venvs/base" && "C:/Users/25191/.local/bin/uv.exe" pip install -r requirements.txt
+# 安装：pip install -r requirements.txt
+# （本项目开发机没有 pip，用 uv：export VIRTUAL_ENV="<你的 venv>" && uv pip install -r requirements.txt）
 
 # 区块链交互
 web3==8.0.0

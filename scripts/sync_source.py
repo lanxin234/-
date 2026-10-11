@@ -29,6 +29,7 @@ import os
 import shutil
 import sys
 
+# 默认归档目录。若换机器或不想用这个位置，运行时加 --dest 覆盖即可。
 DEFAULT_DEST = r"C:/Users/25191/Desktop/项目源代码"
 
 # 与 .gitignore 对应：这些不进归档

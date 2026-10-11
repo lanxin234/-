@@ -30,8 +30,14 @@
 在项目目录下打开终端，执行：
 
 ```bash
-C:/Users/25191/.venvs/base/Scripts/python.exe backend/app.py
+# 用你自己的 Python（含 web3 / flask 等依赖）即可，这里以本项目开发机为例
+PY=C:/Users/25191/.venvs/base/Scripts/python.exe
+
+"$PY" backend/app.py
 ```
+
+> 如果你不是在开发机上运行，把 `PY` 换成你自己的 Python 解释器，并先执行
+> `pip install -r requirements.txt`（依赖清单见文件末尾）。
 
 看到这样的输出就是成功了：
 
@@ -65,7 +71,7 @@ C:/Users/25191/.venvs/base/Scripts/python.exe backend/app.py
 想让看板有内容可看、市场上商品丰富一些，执行：
 
 ```bash
-C:/Users/25191/.venvs/base/Scripts/python.exe scripts/seed_demo.py
+"$PY" scripts/seed_demo.py
 ```
 
 会自动创建 5 个用户、上架 12 件商品（覆盖 5 个分类、5 个价格区间），并完成 7 笔真实交易。跑完看板立刻就有图表了。
@@ -192,7 +198,7 @@ username = get_auth_user()   # ✅ 服务端解出来的，可信
 ### 验证测试
 
 ```bash
-C:/Users/25191/.venvs/base/Scripts/python.exe scripts/test_auth.py
+"$PY" scripts/test_auth.py
 ```
 
 50 个断言，覆盖 9 组场景：注册校验、密码存储、登录、**令牌篡改**、**越权/身份冒用**、登出作废、**暴力破解锁定**、`/api/my_items` 数据隔离、敏感信息泄漏检查。

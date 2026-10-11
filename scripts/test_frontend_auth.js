@@ -10,9 +10,10 @@
  * function 声明会挂到 window，但 const/let 不会 —— 所以对 state 的读写必须走 window.eval。
  */
 const fs = require('fs');
+const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const HTML_PATH = 'C:/Users/25191/Desktop/xiangmu/frontend/index.html';
+const HTML_PATH = path.join(__dirname, '..', 'frontend', 'index.html');
 const html = fs.readFileSync(HTML_PATH, 'utf8');
 
 let PASS = 0, FAIL = 0;
