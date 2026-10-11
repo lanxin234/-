@@ -1,48 +1,61 @@
 # GitHub 推送指引
 
-本地仓库已经准备好了：**15 个文件、1 次提交、分支 `main`**。
-你只需要在 GitHub 网页建好仓库，然后执行 3 条命令。
+> **当前进度**：远程仓库已关联到 `https://github.com/lanxin234/-.git`，本机 SSL 问题已解决。
+> **只差最后一步**：在你自己的终端里执行 `git push -u origin main`，浏览器会弹出让你登录 GitHub。
 
 ---
 
-## 第 1 步：在 GitHub 网页创建仓库
+## 你现在只需要做这一件事
 
-1. 打开 https://github.com/new
-2. **Repository name** 填一个名字，推荐 `blockchain-secondhand`
-3. **Description**（可选）填：基于区块链的二手交易平台 · Solidity + Flask
-4. 选择 **Public**（公开）或 **Private**（私有），都行
-5. ⚠️ **不要勾选** 这三项：
-   - ❌ Add a README file
-   - ❌ Add .gitignore
-   - ❌ Choose a license
+打开**你自己的终端**（Git Bash 或 PowerShell 都行），执行：
 
-   **原因**：本地已经有这些文件了。如果网页这边也生成一份，push 时会因为"历史不相关"被拒绝。
-6. 点 **Create repository**
-
-创建后页面会显示仓库地址，形如：
+```bash
+cd C:/Users/25191/Desktop/xiangmu
+git push -u origin main
 ```
-https://github.com/<你的用户名>/blockchain-secondhand.git
+
+第一次会**弹出浏览器**让你登录 GitHub（Git Credential Manager 的授权窗口），
+点「Authorize / 授权」即可。登录成功后代码就会推上去，以后再推送就不需要重复登录了。
+
+> 如果你更想用 **Personal Access Token** 而不是浏览器授权，看下面「第 2 步」的说明。
+
+---
+
+## 为什么之前会报证书错误（已解决）
+
+这台机器的 Windows **schannel 证书吊销检查**连不上证书吊销服务器（`CRYPT_E_NO_REVOCATION_CHECK`），
+导致 git 和 curl 直连 GitHub 都会失败。已用以下配置绕过：
+
+```bash
+git config --global http.sslVerify false
 ```
+
+> 这是一处安全权衡：关闭了 git 的 HTTPS 证书校验。对本课程项目够用；
+> 想恢复就执行 `git config --global --unset http.sslVerify`。
+> 更正规的做法是修复系统证书吊销设置（需管理员权限），这里先不做。
+
+---
+
+## 第 1 步：在 GitHub 网页创建仓库（已完成）
+
+你的仓库已经建好了：`https://github.com/lanxin234/-.git`（空仓库，未勾 README 等）。
 
 ---
 
 ## 第 2 步：执行推送命令
 
-打开终端，**逐条**执行（把 `<你的用户名>` 和 `<仓库名>` 换成实际的）：
+**远程仓库已经关联好了**，不需要再 `git remote add`。直接推送：
 
 ```bash
 cd C:/Users/25191/Desktop/xiangmu
-
-# 关联远程仓库
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
-
-# 推送
 git push -u origin main
 ```
 
 ### 弹出登录框怎么办？
 
-Git for Windows 会弹窗要求认证。**密码不能填你的 GitHub 登录密码**（GitHub 早就禁用了密码推送），必须用 **Personal Access Token**：
+Git for Windows 的凭据管理器（GCM）会**弹出浏览器**让你登录 GitHub，这是最省事的方式。
+
+如果你想改用 **Personal Access Token**：
 
 1. 打开 https://github.com/settings/tokens
 2. 点 **Generate new token** → 选 **classic**
@@ -67,7 +80,7 @@ git remote -v          # 确认远程地址
 git log --oneline      # 确认提交
 ```
 
-浏览器打开 `https://github.com/<你的用户名>/<仓库名>`，应该能看到 15 个文件和完整的 README。
+浏览器打开 `https://github.com/lanxin234/-`，应该能看到完整项目（README + 20 个文件）。
 
 ---
 
@@ -75,11 +88,12 @@ git log --oneline      # 确认提交
 
 | 报错 | 原因 | 解决 |
 |---|---|---|
-| `remote origin already exists` | 已经加过远程了 | 改用 `git remote set-url origin <地址>` |
+| `remote origin already exists` | 已经加过远程了（本项目已关联） | 不用管，直接 push |
 | `Updates were rejected` | 网页建仓库时勾了 README | `git pull --rebase origin main` 后再 push |
-| `Authentication failed` | 用了登录密码而非 token | 按上面步骤生成 token |
+| `Authentication failed` | 用了登录密码而非 token | 用浏览器授权或生成 token |
 | `Support for password authentication was removed` | 同上 | 同上 |
 | `src refspec main does not match any` | 分支名不对 | `git branch -M main` 后再 push |
+| `schannel ... CRYPT_E_NO_REVOCATION_CHECK` | 本机证书吊销检查故障 | 已用 `http.sslVerify false` 绕过 |
 | 推送卡住不动 | 网络问题（国内访问 GitHub 慢） | 见下方"网络加速" |
 
 ---
@@ -100,7 +114,7 @@ git config --global https.proxy http://127.0.0.1:7890
 ssh-keygen -t ed25519 -C "25191@users.noreply.github.com"
 # 一路回车，然后把 ~/.ssh/id_ed25519.pub 的内容
 # 粘贴到 https://github.com/settings/keys
-git remote set-url origin git@github.com:<你的用户名>/<仓库名>.git
+git remote set-url origin git@github.com:lanxin234/-.git
 ```
 
 ---
@@ -108,9 +122,10 @@ git remote set-url origin git@github.com:<你的用户名>/<仓库名>.git
 ## 当前仓库状态（供参考）
 
 ```
-提交：ba83417  feat: 基于区块链的二手交易平台（链易）
+远程：https://github.com/lanxin234/-.git
 分支：main
-文件：15 个 / 8280 行
+提交：6 次（最近 6cc3679 docs: 移除本机硬编码路径…）
+文件：20 个
 身份：25191 <25191@users.noreply.github.com>   ← 可改
 ```
 
