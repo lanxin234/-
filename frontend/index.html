@@ -1315,8 +1315,7 @@
       <div class="field" style="margin-bottom:14px">
         <label>用户名</label>
         <input type="text" id="loginName" placeholder="中文/字母/数字/下划线，最长12位" maxlength="12"
-               autocomplete="username"
-               onkeydown="if(event.key==='Enter')submitAuth()">
+               autocomplete="username">
         <div class="field-tip" id="nameTip"></div>
       </div>
 
@@ -1324,8 +1323,7 @@
         <label>密码</label>
         <div class="pwd-wrap">
           <input type="password" id="loginPassword" placeholder="至少 6 位，不能全是数字"
-                 autocomplete="current-password"
-                 onkeydown="if(event.key==='Enter')submitAuth()">
+                 autocomplete="current-password">
           <button type="button" class="pwd-toggle" onclick="togglePwd(this)" title="显示/隐藏密码">👁</button>
         </div>
         <div class="field-tip" id="pwdTip"></div>
@@ -1333,8 +1331,7 @@
 
       <div class="field" id="nicknameField" style="display:none;margin-bottom:14px">
         <label>昵称<span style="color:var(--text-3);font-weight:400">（可选，默认与用户名相同）</span></label>
-        <input type="text" id="regNickname" placeholder="别人看到的名字" maxlength="20"
-               onkeydown="if(event.key==='Enter')submitAuth()">
+        <input type="text" id="regNickname" placeholder="别人看到的名字" maxlength="20">
       </div>
 
       <div class="auth-strength" id="strengthBox" style="display:none">
@@ -1711,12 +1708,21 @@ async function api(path, opts) {
       localStorage.setItem('ly_token', renewed);
     }
 
-    // 401 → 登录失效，清掉本地状态
-    if (res.status === 401 && state.token) {
-      clearAuth();
-      if (document.getElementById('authCard')) {
-        authMsg('登录已过期，请重新登录', 'warn');
+    // 401 分两种，处理要分开：
+    //   AUTH_REQUIRED    → 令牌真的失效了，清登录态、引导重登
+    //   ACCOUNT_POOL_FULL → 令牌没问题，只是演示账户用完了，不能把用户踢下线
+    if (res.status === 401 || res.status === 503) {
+      const data = await res.clone().json().catch(() => ({}));
+      if (data.code === 'AUTH_REQUIRED' && state.token) {
+        clearAuth();
+        setAuthHint(data.error || '登录已过期，请重新登录', 'warn');
+        // 明确告诉用户是"掉线了"，而不是静默失败
+        toast('登录已过期，请重新登录', 'warn');
+      } else if (data.code === 'ACCOUNT_POOL_FULL') {
+        setAuthHint('演示账户已用完，请重置整条链', 'error');
+        toast('演示账户已用完（最多 9 个用户），请重置整条链', 'error');
       }
+      return data;
     }
 
     const data = await res.json().catch(() => ({ success: false, error: '服务器返回格式异常' }));
@@ -1725,6 +1731,17 @@ async function api(path, opts) {
     return { success: false, error: '无法连接到服务器，请确认后端服务正在运行' };
   }
 }
+
+/**
+ * 把提示信息写到登录卡片上（如果卡片在页面上）。
+ * 同时暂存起来，等卡片渲染出来后再补显 —— 否则用户看到的是一片沉默。
+ */
+function setAuthHint(msg, kind) {
+  pendingAuthHint = { msg: msg, kind: kind || 'info' };
+  const box = document.getElementById('authMsg');
+  if (box) authMsg(msg, kind);
+}
+let pendingAuthHint = null;
 
 function post(path, body) {
   return api(path, {
@@ -2052,12 +2069,129 @@ function renderUserBar() {
   `;
 }
 
+/**
+ * 登录/注册表单的 HTML 模板。
+ * 页面首屏是内联写死的，这里存一份副本，供"退出登录后原地重建表单"使用 ——
+ * 否则用户被踢下线时只会看到一条光秃秃的提示，没有登录入口，只能手动刷新页面。
+ */
+const AUTH_FORM_TEMPLATE = `
+    <div class="auth-head">
+      <div class="auth-icon">🔐</div>
+      <div>
+        <div class="auth-title" id="authTitle">登录链易</div>
+        <div class="auth-sub" id="authSub">密码经 scrypt 加盐哈希存储，令牌 2 小时自动过期</div>
+      </div>
+    </div>
+
+    <div class="auth-form">
+      <div class="field" style="margin-bottom:14px">
+        <label>用户名</label>
+        <input type="text" id="loginName" placeholder="中文/字母/数字/下划线，最长12位" maxlength="12"
+               autocomplete="username">
+        <div class="field-tip" id="nameTip"></div>
+      </div>
+
+      <div class="field" style="margin-bottom:14px">
+        <label>密码</label>
+        <div class="pwd-wrap">
+          <input type="password" id="loginPassword" placeholder="至少 6 位，不能全是数字"
+                 autocomplete="current-password">
+          <button type="button" class="pwd-toggle" onclick="togglePwd(this)" title="显示/隐藏密码">👁</button>
+        </div>
+        <div class="field-tip" id="pwdTip"></div>
+      </div>
+
+      <div class="field" id="nicknameField" style="display:none;margin-bottom:14px">
+        <label>昵称<span style="color:var(--text-3);font-weight:400">（可选，默认与用户名相同）</span></label>
+        <input type="text" id="regNickname" placeholder="别人看到的名字" maxlength="20">
+      </div>
+
+      <div class="auth-strength" id="strengthBox" style="display:none">
+        <div class="strength-bars">
+          <span class="sb"></span><span class="sb"></span><span class="sb"></span>
+        </div>
+        <span class="strength-text" id="strengthText">密码强度</span>
+      </div>
+
+      <div class="auth-msg" id="authMsg"></div>
+
+      <div class="auth-actions">
+        <button class="btn" id="authSubmit" onclick="submitAuth(this)" style="flex:1">
+          登录
+        </button>
+        <button class="btn ghost" id="authSwitch" onclick="switchAuthMode()">注册新账号</button>
+      </div>
+    </div>
+
+    <div class="auth-note">
+      <span>💡 演示提示：本平台密码只存在后端内存，重启后需重新注册</span>
+    </div>`;
+
+/**
+ * 给（新建出来的）登录表单重新挂上事件监听。
+ * innerHTML 一换，元素全部是新对象，旧监听器随之失效，必须重绑。
+ */
+function bindAuthForm() {
+  // 回车提交
+  ['loginName', 'loginPassword', 'regNickname'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.onkeydown = e => { if (e.key === 'Enter') submitAuth(); };
+  });
+
+  // 密码实时强度 + 注册模式的格式校验
+  const pwd = document.getElementById('loginPassword');
+  if (pwd) {
+    pwd.addEventListener('input', () => {
+      updateStrength();
+      if (state.authMode !== 'register') return;
+      const tip = document.getElementById('pwdTip');
+      if (!tip) return;
+      const v = pwd.value;
+      if (!v) { tip.className = 'field-tip'; tip.textContent = ''; }
+      else if (v.length < 6) { tip.className = 'field-tip err'; tip.textContent = '密码至少 6 位'; }
+      else if (v.length > 64) { tip.className = 'field-tip err'; tip.textContent = '密码最长 64 位'; }
+      else if (/^\d+$/.test(v)) { tip.className = 'field-tip err'; tip.textContent = '不能全是数字，请混合字母'; }
+      else if (new Set(v).size === 1) { tip.className = 'field-tip err'; tip.textContent = '不能是重复的同一个字符'; }
+      else { tip.className = 'field-tip ok'; tip.textContent = '格式符合要求'; }
+    });
+  }
+
+  // 重建后如果本来是"注册模式"，UI 要跟着回到注册态
+  if (state.authMode === 'register') switchAuthMode();
+}
+
+/**
+ * 退出登录态后把顶部还原成登录/注册表单。
+ * 之前只清 state 不还表格，用户看到的是「已登录」界面却什么都做不了 —— 很困惑。
+ */
+function renderAuthForm() {
+  const card = document.getElementById('authCard');
+  if (!card) return;
+  card.className = 'auth-card';
+  card.style.maxWidth = '';
+
+  const tpl = AUTH_FORM_TEMPLATE;
+  if (tpl && card.innerHTML.trim() !== tpl.trim()) {
+    card.innerHTML = tpl;
+    bindAuthForm();
+  }
+
+  // 把"为什么回到登录页"的原因补显出来
+  if (pendingAuthHint) {
+    authMsg(pendingAuthHint.msg, pendingAuthHint.kind);
+    pendingAuthHint = null;
+  }
+}
+
 /* 登出：通知服务端作废 token，并清空本地 */
 async function doLogout(btn) {
   if (btn) btnLoading(btn, true);
   await post('/api/logout');
   clearAuth();
-  location.reload();
+  // 原地还原登录表单，用户可以直接换账号登录，不必手动刷新
+  renderAuthForm();
+  setAuthHint('已安全退出，可切换其他账号登录', 'info');
+  refreshAll();
 }
 
 function clearAuth() {
@@ -2075,7 +2209,10 @@ async function restoreSession() {
   state.token = token;
   const info = await api('/api/me');
   if (!info.success) {
+    // api() 里已经按错误码处理过（令牌失效会把 token 清掉）；
+    // 这里兜底再清一次，并把登录表单还回去
     clearAuth();
+    renderAuthForm();
     return false;
   }
 
@@ -3318,10 +3455,16 @@ async function doReset() {
 
   const r = await post('/api/reset');
   if (r.success) {
-    toast('链已重置，请重新登录', 'success');
+    // 重置会清空链上的用户-地址映射，当前登录态必然失效。
+    // 与其静默把用户丢回登录页（以前就是这么干的，用户会以为"莫名其妙掉线了"），
+    // 不如明确告知原因。
+    setAuthHint('整条链已重置，请重新登录', 'warn');
     clearAuth();
     state.items = []; state.q = ''; state.category = '全部'; state.status = ''; state.page = 1;
-    setTimeout(() => location.reload(), 900);
+    renderAuthForm();
+    toast('链已重置，请重新登录', 'success');
+    loadItems();
+    checkStatus();
   } else {
     toast(r.error || '重置失败', 'error');
   }
@@ -3389,23 +3532,8 @@ document.addEventListener('keydown', e => {
    初始化
    ============================================================ */
 (async function init() {
-  // 密码框实时强度提示（仅注册模式显示，但监听一直挂着）
-  const pwd = document.getElementById('loginPassword');
-  if (pwd) {
-    pwd.addEventListener('input', () => {
-      updateStrength();
-      if (state.authMode === 'register') {
-        const v = pwd.value;
-        const tip = document.getElementById('pwdTip');
-        if (!v) { tip.className = 'field-tip'; tip.textContent = ''; }
-        else if (v.length < 6) { tip.className = 'field-tip err'; tip.textContent = '密码至少 6 位'; }
-        else if (v.length > 64) { tip.className = 'field-tip err'; tip.textContent = '密码最长 64 位'; }
-        else if (/^\d+$/.test(v)) { tip.className = 'field-tip err'; tip.textContent = '不能全是数字，请混合字母'; }
-        else if (new Set(v).size === 1) { tip.className = 'field-tip err'; tip.textContent = '不能是重复的同一个字符'; }
-        else { tip.className = 'field-tip ok'; tip.textContent = '格式符合要求'; }
-      }
-    });
-  }
+  // 给首屏登录表单挂事件（回车提交、密码强度、格式校验）
+  bindAuthForm();
 
   // 优先尝试用本地 token 恢复登录态
   const loggedIn = await restoreSession();

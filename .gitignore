@@ -29,3 +29,8 @@ backend/.secret_key
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 本地临时文件（启动脚本、调试输出）
+.run_server.bat
+.pscheck.txt
+.launch.vbs

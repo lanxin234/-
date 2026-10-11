@@ -376,6 +376,26 @@ class AppState:
     def addr_of(self, username: str):
         return self.user_sessions.get(username)
 
+    def ensure_account(self, username: str):
+        """
+        确保用户名有一个可用的链上账户，返回地址；分配不到返回 None。
+
+        存在的意义：链重置会清空 user_sessions（用户名 → 地址的映射），
+        但故意保留 credentials（账号密码）。这就造成一种尴尬状态 ——
+        用户令牌有效、账号也还在，却因为没有链上地址而处处报"登录已失效"。
+
+        调用本方法会自动补发账户，让"重置链之后刷新页面即可继续用"成立，
+        而不是逼用户重新登录一次。
+        """
+        addr = self.user_sessions.get(username)
+        if addr:
+            return addr
+        try:
+            return self.get_account(username)
+        except ValueError:
+            # 账户池满了（本链最多 9 个用户）
+            return None
+
     # ---- 认证相关 ----
 
     def is_registered(self, username: str) -> bool:
@@ -441,7 +461,12 @@ def current_user():
 def require_auth(view):
     """
     需要登录才能访问的接口。
-    校验通过后把用户名放进 flask.g，业务代码直接取，不再信任前端传的 username。
+    校验通过后把用户名放进 request，业务代码用 get_auth_user() 取。
+
+    两种失败情形要分开处理（前端提示语不一样）：
+      - 令牌本身无效（签名错/过期/已登出）→ AUTH_REQUIRED，必须重新登录
+      - 令牌有效但账号没了（比如令牌签发后被清空了账号）→ AUTH_REQUIRED
+      - 令牌有效、账号也在，只是链重置后丢了地址映射 → 自动补发，不打扰用户
     """
     @wraps(view)
     def wrapper(*args, **kwargs):
@@ -449,12 +474,27 @@ def require_auth(view):
         username, remain = auth.verify_token(token)
 
         if not username or token in state.revoked_tokens:
-            return jsonify({"success": False, "error": "登录已失效，请重新登录", "code": "AUTH_REQUIRED"}), 401
+            return jsonify({
+                "success": False,
+                "error": "登录已失效，请重新登录",
+                "code": "AUTH_REQUIRED",
+            }), 401
 
         if not state.is_registered(username):
-            return jsonify({"success": False, "error": "账号不存在，请重新注册", "code": "AUTH_REQUIRED"}), 401
+            return jsonify({
+                "success": False,
+                "error": "账号不存在，请重新注册",
+                "code": "AUTH_REQUIRED",
+            }), 401
 
-        # 放到请求上下文，业务层用 get_auth_user() 取
+        # 令牌没问题，但可能因为链重置丢了地址映射 —— 自动补一个
+        if state.addr_of(username) is None and state.ensure_account(username) is None:
+            return jsonify({
+                "success": False,
+                "error": "演示账户已用完（本链最多支持 9 位用户）。请重置整条链后再试",
+                "code": "ACCOUNT_POOL_FULL",
+            }), 503
+
         request.auth_user = username
         resp = view(*args, **kwargs)
 
@@ -571,7 +611,7 @@ def api_register():
             "success": False,
             "error": "演示账户已用完（本链最多支持 9 位用户）。点「区块链浏览 → 重置整条链」可清空重置",
             "code": "ACCOUNT_POOL_FULL",
-        }), 400
+        }), 503
 
     try:
         state.market.functions.register(nickname).transact({"from": addr})
@@ -589,7 +629,7 @@ def api_register():
                 "success": False,
                 "error": "演示账户已用完（本链最多支持 9 位用户）。点「区块链浏览 → 重置整条链」可清空重置",
                 "code": "ACCOUNT_POOL_FULL",
-            }), 400
+            }), 503
         except Exception as e2:
             return jsonify({"success": False, "error": friendly_error(e2)}), 400
 
@@ -646,7 +686,8 @@ def api_login():
     # ---- 成功 ----
     auth.clear_failures(username)
     token = auth.create_token(username)
-    addr = state.addr_of(username)
+    # 链重置会清掉地址映射，这里顺手补发，避免"登录成功却没有链上身份"
+    addr = state.ensure_account(username)
 
     return jsonify({
         "success": True,
@@ -676,9 +717,13 @@ def api_me():
     这是前端的「我是谁」接口 —— 刷新页面后用它恢复登录态。
     """
     username = get_auth_user()
-    addr = state.addr_of(username)
+    addr = state.ensure_account(username)
     if not addr:
-        return jsonify({"success": False, "error": "账号不存在"}), 404
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完，请重置整条链",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 503
 
     nick, sold, bought, avg = state.market.functions.getUserInfo(addr).call()
     balance = state.w3.eth.get_balance(addr)
@@ -887,9 +932,13 @@ def api_new_item():
     if price_float > 10000:
         return jsonify({"success": False, "error": "价格超出合理范围"}), 400
 
-    addr = state.addr_of(username)
+    addr = state.ensure_account(username)
     if not addr:
-        return jsonify({"success": False, "error": "用户未注册，请先注册"}), 400
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完，请重置整条链",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 503
 
     # ---- 处理图片（可选）----
     image_hash = ""
@@ -1045,9 +1094,13 @@ def api_buy():
     username = get_auth_user()          # 身份以 token 为准，不信前端
     item_id = data.get("item_id")
 
-    addr = state.addr_of(username)
+    addr = state.ensure_account(username)
     if not addr:
-        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完，请重置整条链",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 503
 
     try:
         item = state.market.functions.getItem(int(item_id)).call()
@@ -1072,9 +1125,13 @@ def api_confirm():
     username = get_auth_user()
     item_id = data.get("item_id")
 
-    addr = state.addr_of(username)
+    addr = state.ensure_account(username)
     if not addr:
-        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完，请重置整条链",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 503
 
     try:
         state.market.functions.confirmReceived(int(item_id)).transact({"from": addr})
@@ -1091,9 +1148,13 @@ def api_remove():
     username = get_auth_user()
     item_id = data.get("item_id")
 
-    addr = state.addr_of(username)
+    addr = state.ensure_account(username)
     if not addr:
-        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完，请重置整条链",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 503
 
     try:
         state.market.functions.removeItem(int(item_id)).transact({"from": addr})
@@ -1112,9 +1173,13 @@ def api_rate():
     score = data.get("score")
     target = (data.get("target") or "").strip()   # 被评价人的用户名
 
-    addr = state.addr_of(username)
+    addr = state.ensure_account(username)
     if not addr:
-        return jsonify({"success": False, "error": "账号异常，请重新登录"}), 400
+        return jsonify({
+            "success": False,
+            "error": "演示账户已用完，请重置整条链",
+            "code": "ACCOUNT_POOL_FULL",
+        }), 503
 
     # 评分范围校验（合约里也有，这里提前拦一道，省一次上链）
     try:
@@ -1147,7 +1212,7 @@ def api_my_items():
     服务端按 token 里的身份过滤 —— 前端传什么 username 都没用。
     """
     username = get_auth_user()
-    my_addr = (state.addr_of(username) or "").lower()
+    my_addr = (state.ensure_account(username) or "").lower()
     count = state.market.functions.getItemCount().call()
     status_names = {0: "在售", 1: "交易中", 2: "已售出", 3: "已下架"}
     mine = []
