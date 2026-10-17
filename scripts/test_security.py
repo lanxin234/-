@@ -195,7 +195,100 @@ for i in range(5):
 check("本机直连不受限流影响", all(c == 200 for c in local_codes), str(local_codes))
 
 # ------------------------------------------------------------
-print("\n【7】未配置 ADMIN_KEY 时，对外必须一律拒绝（fail closed）")
+print("\n【7】管理员接口（用户列表 / 充值 / 下架）")
+# ------------------------------------------------------------
+r = client.get("/api/admin/session")
+j = r.get_json() or {}
+check("本机直连自动是管理员", r.status_code == 200 and j.get("admin") is True, str(j))
+check("模式为 local", j.get("mode") == "local", str(j))
+
+r = client.get("/api/admin/session", environ_base=EXT)
+check("外部来源不是管理员", (r.get_json() or {}).get("admin") is False, r.get_data(as_text=True))
+
+r = client.get("/api/admin/users", environ_base=EXT)
+check("外部无密钥看用户列表 → 403", r.status_code == 403, f"HTTP {r.status_code}")
+check("错误码 ADMIN_REQUIRED", (r.get_json() or {}).get("code") == "ADMIN_REQUIRED",
+      str(r.get_json()))
+
+r = client.get("/api/admin/users", headers={"X-Admin-Key": "test-admin-key"},
+               environ_base=EXT)
+j = r.get_json() or {}
+check("外部带密钥可看用户列表", r.status_code == 200 and j.get("success"), f"HTTP {r.status_code}")
+check("列表含平台账户信息", "platform" in j, list(j.keys()))
+
+# 用之前注册的 邀请丙 发布一件商品，供管理员下架
+r = client.post("/api/items",
+                headers={"Authorization": "Bearer " + (TOKEN or "")},
+                data={"name": "待下架商品", "price_eth": "2", "category": "其他",
+                      "description": "测试用"},
+                content_type="multipart/form-data")
+check("测试用户成功上架", r.status_code == 200 and (r.get_json() or {}).get("success"),
+      r.get_data(as_text=True)[:150])
+
+r = client.get("/api/admin/items")
+items = (r.get_json() or {}).get("items") or []
+check("管理员能看到商品列表", len(items) >= 1, str(len(items)))
+target = items[0] if items else {}
+check("商品带状态字段", "status" in target, str(target)[:120])
+
+# 充值
+before = None
+r = client.get("/api/admin/users")
+for u in (r.get_json() or {}).get("users", []):
+    if u["username"] == "邀请丙":
+        before = u["balance_eth"]
+check("查到充值目标用户", before is not None, str(before))
+
+r = client.post("/api/admin/recharge",
+                json={"username": "邀请丙", "amount_eth": "7.5"},
+                headers={"X-Admin-Key": "test-admin-key"}, environ_base=EXT)
+j = r.get_json() or {}
+check("管理员充值成功", r.status_code == 200 and j.get("success"), f"HTTP {r.status_code} {j}")
+check("余额确实增加 7.5",
+      before is not None and abs((j.get("balance_eth") or 0) - (before + 7.5)) < 0.01,
+      f"{before} -> {j.get('balance_eth')}")
+
+r = client.post("/api/admin/recharge",
+                json={"username": "邀请丙", "amount_eth": "0"},
+                headers={"X-Admin-Key": "test-admin-key"}, environ_base=EXT)
+check("充值 0 → 400", r.status_code == 400, f"HTTP {r.status_code}")
+
+r = client.post("/api/admin/recharge",
+                json={"username": "不存在的人", "amount_eth": "1"},
+                headers={"X-Admin-Key": "test-admin-key"}, environ_base=EXT)
+check("给不存在的用户充值 → 404", r.status_code == 404, f"HTTP {r.status_code}")
+
+r = client.post("/api/admin/recharge", json={"username": "邀请丙", "amount_eth": "1"},
+                environ_base=EXT)
+check("外部无密钥充值 → 403", r.status_code == 403, f"HTTP {r.status_code}")
+
+# 下架
+r = client.post("/api/admin/remove_item", json={"item_id": target.get("item_id")},
+                headers={"X-Admin-Key": "test-admin-key"}, environ_base=EXT)
+j = r.get_json() or {}
+check("管理员下架成功", r.status_code == 200 and j.get("success"), f"HTTP {r.status_code} {j}")
+
+r = client.post("/api/admin/remove_item", json={"item_id": target.get("item_id")},
+                headers={"X-Admin-Key": "test-admin-key"}, environ_base=EXT)
+check("重复下架 → 409", r.status_code == 409, f"HTTP {r.status_code}")
+check("错误码 ITEM_NOT_ON_SALE", (r.get_json() or {}).get("code") == "ITEM_NOT_ON_SALE",
+      str(r.get_json()))
+
+r = client.get("/api/admin/items")
+after = [x for x in ((r.get_json() or {}).get("items") or [])
+         if x.get("item_id") == target.get("item_id")]
+check("下架后状态变为 3", after and after[0].get("status") == 3, str(after)[:150])
+
+# 审计日志
+r = client.get("/api/admin/logs")
+logs = (r.get_json() or {}).get("logs") or []
+check("写入了审计日志", len(logs) >= 2, str(len(logs)))
+check("日志含 recharge 与 remove_item",
+      {"recharge", "remove_item"} <= {x.get("action") for x in logs},
+      str([x.get("action") for x in logs]))
+
+# ------------------------------------------------------------
+print("\n【8】未配置 ADMIN_KEY 时，对外必须一律拒绝（fail closed）")
 # ------------------------------------------------------------
 appmod.ADMIN_KEY = ""
 r = client.post("/api/reset", json={"wipe_credentials": False}, environ_base=EXT)

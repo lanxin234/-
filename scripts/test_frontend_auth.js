@@ -53,7 +53,7 @@ const dom = new JSDOM(html, {
 const { window } = dom;
 const doc = window.document;
 
-setTimeout(() => {
+setTimeout(async () => {
   console.log('='.repeat(62));
   console.log('  前端登录态行为测试（jsdom 真实执行）');
   console.log('='.repeat(62));
@@ -179,13 +179,20 @@ setTimeout(() => {
   check('存在手机端导航 #mobileNav', !!mobileNav);
 
   const mBtns = mobileNav ? [...mobileNav.querySelectorAll('button')] : [];
-  check('底部导航有 5 个入口', mBtns.length === 5, String(mBtns.length));
+  check('底部导航有 6 个入口（含默认隐藏的管理）', mBtns.length === 6, String(mBtns.length));
 
   const mViews = mBtns.map(b => b.dataset.view);
   check('包含 publish（上架）入口', mViews.includes('publish'), mViews.join(','));
   check('market/orders/board/chain 都在',
         ['market', 'orders', 'board', 'chain'].every(v => mViews.includes(v)),
         mViews.join(','));
+
+  // 管理入口默认不可见：非管理员不该看到它
+  const mnAdmin = mBtns.find(b => b.dataset.view === 'admin');
+  check('管理入口默认隐藏', !!mnAdmin && mnAdmin.style.display === 'none',
+        mnAdmin ? mnAdmin.style.display : 'missing');
+  check('桌面端管理入口也默认隐藏',
+        doc.getElementById('navAdmin').style.display === 'none');
 
   check('没有把整个 nav 隐藏（曾经的 bug）',
         !/\bnav\s*\{\s*display:\s*none/.test(html));
@@ -205,8 +212,70 @@ setTimeout(() => {
   check('发布视图已激活',
         doc.getElementById('view-publish').classList.contains('active'));
 
-  // ---- 11. 运行期没有未捕获异常 ----
-  console.log('\n【11】页面脚本运行期无未捕获异常');
+  // ---- 11. 管理页渲染与操作接线 ----
+  console.log('\n【11】管理页渲染与操作接线');
+  const savedFetch = window.fetch;
+  window.__adminCalls = [];
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const o = opts || {};
+    window.__adminCalls.push({ url: u, method: o.method || 'GET', body: o.body, headers: o.headers || {} });
+    let payload = { success: true };
+    if (u.includes('/api/admin/session')) {
+      payload = { success: true, admin: true, mode: 'local' };
+    } else if (u.includes('/api/admin/users')) {
+      payload = {
+        success: true, count: 1,
+        platform: { address: '0x0', balance_eth: 100 },
+        users: [{ username: '甲', nickname: '甲', address: '0xabc', balance_eth: 10,
+                  sold_count: 1, bought_count: 0, avg_rating: 5,
+                  listed_count: 2, on_sale_count: 1 }],
+      };
+    } else if (u.includes('/api/admin/items')) {
+      payload = { success: true, count: 1, items: [{ item_id: 1, name: '违规商品',
+                  price_eth: 1, seller_name: '甲', seller_username: '甲', status: 0 }] };
+    } else if (u.includes('/api/admin/logs')) {
+      payload = { success: true, logs: [{ action: 'recharge', target: '甲', amount: '5',
+                  balance_after: 15, by: 'local', time: '2026-10-17 10:00:00' }] };
+    } else if (u.includes('/api/admin/recharge')) {
+      payload = { success: true, message: '已充值' };
+    } else {
+      payload = { success: true, items: [], total: 0, page: 1,
+                  categories: [], counts: {}, cats: {} };
+    }
+    return { status: 200, ok: true, headers: { get: () => null },
+             clone: () => ({ json: async () => payload }), json: async () => payload };
+  };
+
+  window.eval('state.isAdmin = true; loadAdmin();');
+  await new Promise(r => setTimeout(r, 80));
+  check('用户表渲染出用户名',
+        doc.getElementById('adminUserTable').textContent.includes('甲'),
+        doc.getElementById('adminUserTable').textContent.slice(0, 80));
+  check('商品表渲染出商品名',
+        doc.getElementById('adminItemTable').textContent.includes('违规商品'));
+  check('审计日志渲染出操作',
+        doc.getElementById('adminLogList').textContent.includes('充值'));
+  const rmBtn = doc.querySelector('#adminItemTable .btn-mini.danger');
+  check('在售商品的下架按钮可用', !!rmBtn && !rmBtn.disabled);
+
+  // 充值：确认请求体带对了 username / amount
+  window.prompt = () => '5';
+  window.eval('doRecharge("甲")');
+  await new Promise(r => setTimeout(r, 80));
+  const rechargeCall = window.__adminCalls.find(c => c.url.includes('/api/admin/recharge'));
+  let body = {};
+  try { body = JSON.parse(rechargeCall.body); } catch (e) {}
+  check('充值请求带 username', body.username === '甲', String(rechargeCall && rechargeCall.body));
+  check('充值请求带金额 5', body.amount_eth === 5, String(body && body.amount_eth));
+  check('充值后重新拉取用户列表',
+        window.__adminCalls.filter(c => c.url.includes('/api/admin/users')).length >= 2);
+
+  window.fetch = savedFetch;
+  window.eval("switchView('market')");
+
+  // ---- 12. 运行期没有未捕获异常 ----
+  console.log('\n【12】页面脚本运行期无未捕获异常');
   const errs = window.__errs.filter(e => !/Not implemented|Could not parse CSS/.test(e));
   check('无未捕获 JS 异常', errs.length === 0, errs.join(' | '));
 

@@ -29,6 +29,7 @@ import hashlib
 import threading
 import re
 from collections import deque
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -1876,6 +1877,312 @@ def api_dashboard():
             "values": list(price_buckets.values()),
         },
     })
+
+
+# ============================================================
+#  管理员接口
+# ============================================================
+# 为什么管理员能"下架别人的商品"：
+#   合约的 removeItem 只认 item.seller == msg.sender。
+#   本平台的链账户由后端托管（私钥在服务端），所以管理员可以
+#   **用卖家的身份**发这笔交易 —— 合约看到的就是卖家本人操作。
+#   这是真上链的下架（会留下 ItemRemoved 事件），不是前端隐藏。
+#
+# 为什么充值能生效：
+#   平台账户（accounts[0]，即合约部署者）持有 ETH，直接转账给用户。
+#   同样是真链上转账，区块高度会 +1。
+
+ADMIN_LOG = DATA_DIR / "admin_log.jsonl"
+
+
+def log_admin(action: str, **fields):
+    """审计日志：谁在什么时候对谁做了什么。写失败不影响业务。"""
+    rec = {
+        "ts": int(time.time()),
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "action": action,
+    }
+    rec.update(fields)
+    try:
+        with open(ADMIN_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def admin_mode():
+    """
+    返回 'local' / 'key' / None。
+
+    local —— 就在这台机器上直连（管理员本人坐在电脑前），等价于
+             已经能改 data/ 目录，谈不上越权
+    key   —— 带了正确的 X-Admin-Key（手机/校外管理时用）
+    """
+    if is_local_direct():
+        return "local"
+    supplied = (request.headers.get("X-Admin-Key") or "").strip()
+    if ADMIN_KEY and supplied and hmac.compare_digest(supplied, ADMIN_KEY):
+        return "key"
+    return None
+
+
+def require_admin(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        mode = admin_mode()
+        if not mode:
+            return jsonify({
+                "success": False,
+                "error": "需要管理员权限（管理员密钥缺失或不正确）",
+                "code": "ADMIN_REQUIRED",
+            }), 403
+        request.admin_mode = mode
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def platform_account():
+    """平台账户 = 合约部署者 = accounts[0]"""
+    return state.accounts[0]
+
+
+@app.route("/api/admin/session")
+def api_admin_session():
+    """
+    前端用它决定要不要显示「管理」入口。
+    未登录也返回 200，只是 admin=false —— 不做成 403 是为了避免控制台报错。
+    """
+    mode = admin_mode()
+    payload = {"success": True, "admin": bool(mode), "mode": mode}
+    if mode:
+        payload["platform_balance_eth"] = float(state.w3.from_wei(
+            state.w3.eth.get_balance(platform_account()), "ether"))
+        payload["user_count"] = len(state.credentials)
+    return jsonify(payload)
+
+
+@app.route("/api/admin/users")
+@require_admin
+def api_admin_users():
+    """
+    全部注册用户 + 余额 + 信誉 + 在售数量。
+
+    商品统计只遍历一次链上商品，避免对每个用户重复调合约。
+    """
+    total_items = state.market.functions.getItemCount().call()
+    listed = {}
+    on_sale = {}
+    for i in range(1, total_items + 1):
+        try:
+            it = state.market.functions.getItem(i).call()
+        except Exception:
+            continue
+        seller = (it[4] or "").lower()
+        listed[seller] = listed.get(seller, 0) + 1
+        if it[6] == 0:                      # 0 = OnSale
+            on_sale[seller] = on_sale.get(seller, 0) + 1
+
+    rows = []
+    for username in list(state.credentials.keys()):
+        addr = state.addr_of(username)
+        row = {
+            "username": username,
+            "nickname": state.display_name(username),
+            "address": addr or "",
+            "has_account": bool(addr),
+            "balance_eth": 0.0,
+            "sold_count": 0,
+            "bought_count": 0,
+            "avg_rating": 0.0,
+            "listed_count": 0,
+            "on_sale_count": 0,
+        }
+        if addr:
+            try:
+                nickname, sold, bought, avg = state.market.functions.getUserInfo(addr).call()
+                row["sold_count"] = int(sold)
+                row["bought_count"] = int(bought)
+                row["avg_rating"] = round(int(avg) / 100.0, 2)
+                if nickname:
+                    row["nickname"] = nickname
+            except Exception:
+                pass
+            try:
+                row["balance_eth"] = float(state.w3.from_wei(
+                    state.w3.eth.get_balance(addr), "ether"))
+            except Exception:
+                pass
+            row["listed_count"] = listed.get(addr.lower(), 0)
+            row["on_sale_count"] = on_sale.get(addr.lower(), 0)
+        rows.append(row)
+
+    platform = platform_account()
+    return jsonify({
+        "success": True,
+        "count": len(rows),
+        "users": rows,
+        "platform": {
+            "address": platform,
+            "balance_eth": float(state.w3.from_wei(
+                state.w3.eth.get_balance(platform), "ether")),
+        },
+    })
+
+
+@app.route("/api/admin/items")
+@require_admin
+def api_admin_items():
+    """全部商品（含已下架），供管理页审核用"""
+    addr_to_user = {a.lower(): u for u, a in state.user_sessions.items()}
+    total = state.market.functions.getItemCount().call()
+    rows = []
+    for i in range(1, total + 1):
+        try:
+            it = state.market.functions.getItem(i).call()
+        except Exception:
+            continue
+        seller_addr = it[4] or ""
+        seller_user = addr_to_user.get(seller_addr.lower(), "")
+        rows.append({
+            "item_id": int(it[0]),
+            "name": it[1],
+            "price_eth": float(state.w3.from_wei(int(it[3]), "ether")),
+            "seller_address": seller_addr,
+            "seller_username": seller_user,
+            "seller_name": state.display_name(seller_user) if seller_user else "",
+            "status": int(it[6]),
+            "created_at": int(it[7]) if len(it) > 7 else 0,
+        })
+    rows.reverse()          # 新上架的在前，方便先看最近的
+    return jsonify({"success": True, "count": len(rows), "items": rows})
+
+
+@app.route("/api/admin/recharge", methods=["POST"])
+@require_admin
+def api_admin_recharge():
+    """给某个用户充值（平台账户转账，真上链）"""
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    if not username:
+        return jsonify({"success": False, "error": "请指定用户名"}), 400
+
+    try:
+        amount = Decimal(str(data.get("amount_eth")))
+    except (InvalidOperation, TypeError, ValueError):
+        return jsonify({"success": False, "error": "充值金额格式不正确"}), 400
+    if not amount.is_finite() or amount <= 0:
+        return jsonify({"success": False, "error": "充值金额必须大于 0"}), 400
+    if amount > Decimal("1000"):
+        return jsonify({"success": False, "error": "单次充值不能超过 1000 ETH"}), 400
+    if -amount.as_tuple().exponent > 6:
+        return jsonify({"success": False, "error": "最多支持 6 位小数"}), 400
+
+    addr = state.addr_of(username)
+    if not addr:
+        return jsonify({
+            "success": False,
+            "error": "该用户不存在，或还没有分配链上账户",
+        }), 404
+
+    wei = state.w3.to_wei(amount, "ether")
+    platform = platform_account()
+    platform_balance = state.w3.eth.get_balance(platform)
+    if platform_balance < wei:
+        return jsonify({
+            "success": False,
+            "error": f"平台账户余额不足（当前 "
+                     f"{float(state.w3.from_wei(platform_balance, 'ether')):.4f} ETH）",
+        }), 400
+
+    try:
+        with CHAIN_LOCK:
+            tx_hash = state.w3.eth.send_transaction({
+                "from": platform, "to": addr, "value": wei,
+            })
+            state.w3.eth.wait_for_transaction_receipt(tx_hash)
+    except Exception as e:
+        return jsonify({"success": False, "error": f"转账失败：{friendly_error(e)}"}), 400
+
+    new_balance = float(state.w3.from_wei(state.w3.eth.get_balance(addr), "ether"))
+    log_admin("recharge", target=username, address=addr,
+              amount=str(amount), balance_after=new_balance,
+              by=request.admin_mode)
+
+    return jsonify({
+        "success": True,
+        "message": f"已给「{state.display_name(username)}」充值 {amount} ETH",
+        "username": username,
+        "amount_eth": float(amount),
+        "balance_eth": new_balance,
+        "block_number": state.w3.eth.block_number,
+    })
+
+
+@app.route("/api/admin/remove_item", methods=["POST"])
+@require_admin
+def api_admin_remove_item():
+    """
+    管理员下架违规商品。
+
+    以**卖家身份**上链发 removeItem —— 合约只校验 msg.sender 是不是卖家，
+    而本平台的账户私钥都在服务端，所以这是合法的真下架。
+    只在售状态可下架（合约自身限制）；托管中的商品需要买家确认收货或退款，
+    这里如实告知，不假装成功。
+    """
+    data = request.get_json() or {}
+    try:
+        item_id = int(data.get("item_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "商品 ID 不正确"}), 400
+
+    try:
+        item = state.market.functions.getItem(item_id).call()
+    except Exception:
+        return jsonify({"success": False, "error": "商品不存在"}), 404
+
+    name, seller, status = item[1], item[4], item[6]
+    if status != 0:
+        return jsonify({
+            "success": False,
+            "code": "ITEM_NOT_ON_SALE",
+            "error": "该商品不在「在售」状态（交易中或已成交），合约不允许下架。"
+                     "托管中的订单需要买家确认收货或走退款。",
+        }), 409
+
+    try:
+        chain_tx(state.market.functions.removeItem(item_id), seller)
+    except Exception as e:
+        return jsonify({"success": False, "error": friendly_error(e)}), 400
+
+    log_admin("remove_item", item_id=item_id, item_name=name,
+              seller=seller, by=request.admin_mode)
+
+    return jsonify({
+        "success": True,
+        "message": f"商品「{name}」已下架",
+        "item_id": item_id,
+        "block_number": state.w3.eth.block_number,
+    })
+
+
+@app.route("/api/admin/logs")
+@require_admin
+def api_admin_logs():
+    """最近的管理操作（默认 50 条，最新的在前）"""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit") or 50)))
+    except ValueError:
+        limit = 50
+    if not ADMIN_LOG.exists():
+        return jsonify({"success": True, "logs": []})
+    lines = ADMIN_LOG.read_text(encoding="utf-8").splitlines()[-limit:]
+    out = []
+    for line in reversed(lines):
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return jsonify({"success": True, "logs": out})
 
 
 # ============================================================
