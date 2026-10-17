@@ -101,18 +101,18 @@ png1 = make_png(29, 93, 184)      # 蓝色图
 png2 = make_png(29, 93, 184)      # 完全相同的图（测去重）
 png3 = make_png(200, 40, 40)      # 不同颜色（测哈希不同）
 
-r = requests.post(f"{BASE}/api/upload", files={"image": ("a.png", png1, "image/png")})
+r = requests.post(f"{BASE}/api/upload", headers=auth_hdr(TOKEN_A), files={"image": ("a.png", png1, "image/png")})
 u1 = r.json()
 check("上传图片成功", u1.get("success"), r.text[:200])
 h1 = u1.get("image_hash", "")
 check("返回 64 位 SHA-256 哈希", len(h1) == 64, f"得到 {len(h1)} 位")
 check("返回可访问 URL", u1.get("image_url", "").startswith("/uploads/"), u1.get("image_url"))
 
-r = requests.post(f"{BASE}/api/upload", files={"image": ("b.png", png2, "image/png")})
+r = requests.post(f"{BASE}/api/upload", headers=auth_hdr(TOKEN_A), files={"image": ("b.png", png2, "image/png")})
 u2 = r.json()
 check("相同内容 → 相同哈希（去重）", u2.get("image_hash") == h1)
 
-r = requests.post(f"{BASE}/api/upload", files={"image": ("c.png", png3, "image/png")})
+r = requests.post(f"{BASE}/api/upload", headers=auth_hdr(TOKEN_A), files={"image": ("c.png", png3, "image/png")})
 u3 = r.json()
 check("不同内容 → 不同哈希", u3.get("image_hash") != h1)
 
@@ -135,11 +135,11 @@ r = requests.post(f"{BASE}/api/verify_image", json={"image_hash": "0" * 64})
 check("不存在的哈希 → 报错", r.status_code == 404)
 
 # 非法格式
-r = requests.post(f"{BASE}/api/upload", files={"image": ("x.txt", b"hello", "text/plain")})
+r = requests.post(f"{BASE}/api/upload", headers=auth_hdr(TOKEN_A), files={"image": ("x.txt", b"hello", "text/plain")})
 check("拒绝非图片格式", not r.json().get("success"), r.text[:150])
 
 # 空文件
-r = requests.post(f"{BASE}/api/upload", files={"image": ("e.png", b"", "image/png")})
+r = requests.post(f"{BASE}/api/upload", headers=auth_hdr(TOKEN_A), files={"image": ("e.png", b"", "image/png")})
 check("拒绝空文件", not r.json().get("success"), r.text[:150])
 
 # ---------------------------------------------------------------

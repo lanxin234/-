@@ -10,8 +10,8 @@
  *   1. 带图片上架时，请求确实带了 Authorization: Bearer <token>
  *   2. 请求体是 FormData，且 name/price_eth/category/image 都在
  *   3. 不带图片上架时同样带令牌
- *   4. 全站不存在绕过 api() 的、会漏令牌的裸 fetch（api() 内部与无需鉴权的
- *      /api/upload 除外）
+ *   4. 全站不存在绕过 api() 的、会漏令牌的裸 fetch（api() 内部除外）
+ *      —— /api/upload 已改为必须登录，因此不再享有豁免
  */
 const fs = require('fs');
 const path = require('path');
@@ -137,10 +137,9 @@ setTimeout(async () => {
     const text = script.split('\n')[line - 1].trim();
     return { line, text };
   });
-  // 允许的例外：api() 自身（带 options）、以及无需鉴权的 /api/upload
-  const illegal = rawFetches.filter(f =>
-    !f.text.includes('options') && !f.text.includes('/api/upload'));
-  check('除 api() 自身与 /api/upload 外，无其他裸 fetch', illegal.length === 0,
+  // 唯一允许的例外：api() 自身（签名里带 options）
+  const illegal = rawFetches.filter(f => !f.text.includes('options'));
+  check('除 api() 自身外，无其他裸 fetch', illegal.length === 0,
         illegal.map(f => `L${f.line}: ${f.text}`).join(' | '));
 
   // ---- 4. 无未捕获异常 ----

@@ -16,6 +16,13 @@ setlocal
 
 cd /d "%~dp0"
 
+REM Load local secrets (ADMIN_KEY / INVITE_CODE) if config.env exists.
+REM config.env is gitignored - never put real keys in this .bat file,
+REM because this file IS committed to a public repository.
+if exist "config.env" (
+    for /f "usebackq tokens=1,* delims==" %%A in ("config.env") do set "%%A=%%B"
+)
+
 set "PYTHONIOENCODING=utf-8"
 
 REM Prefer the project venv; fall back to system python.

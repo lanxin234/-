@@ -33,9 +33,12 @@ import sys
 DEFAULT_DEST = r"C:/Users/25191/Desktop/项目源代码"
 
 # 与 .gitignore 对应：这些不进归档
-SKIP_DIRS = {".git", "__pycache__", "build", "uploads",
+# data/ 和 backups/ 一定要排除 —— 里面是链数据库与账号哈希，
+# 归档目录是"纯源代码副本"，不该带任何运行时数据。
+SKIP_DIRS = {".git", "__pycache__", "build", "uploads", "data", "backups",
              ".idea", ".vscode", "venv", ".venv", "node_modules"}
 SKIP_FILES = {".secret_key", "backend.log", ".server.log",
+              "config.env", ".env",
               ".pscheck.txt", ".run_server.bat", ".launch.vbs"}
 SKIP_SUFFIX = (".pyc", ".log", ".map")
 

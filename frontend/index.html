@@ -1458,6 +1458,11 @@
         <input type="text" id="regNickname" placeholder="别人看到的名字" maxlength="20">
       </div>
 
+      <div class="field" id="inviteField" style="display:none;margin-bottom:14px">
+        <label>邀请码<span style="color:var(--text-3);font-weight:400">（管理员开启后必填）</span></label>
+        <input type="text" id="regInvite" placeholder="向管理员索取" maxlength="32">
+      </div>
+
       <div class="auth-strength" id="strengthBox" style="display:none">
         <div class="strength-bars">
           <span class="sb"></span><span class="sb"></span><span class="sb"></span>
@@ -2031,6 +2036,8 @@ async function submitAuth(btn) {
   const username = document.getElementById('loginName').value.trim();
   const password = document.getElementById('loginPassword').value;
   const nickname = document.getElementById('regNickname').value.trim();
+  const inviteEl = document.getElementById('regInvite');
+  const invite = inviteEl ? inviteEl.value.trim() : '';
 
   // ---- 前端预校验 ----
   if (!username) {
@@ -2055,7 +2062,7 @@ async function submitAuth(btn) {
   const path = isRegister ? '/api/register' : '/api/login';
   const remember = isRememberChecked();
   const payload = isRegister
-    ? { username, password, nickname: nickname || username, remember }
+    ? { username, password, nickname: nickname || username, remember, invite_code: invite }
     : { username, password, remember };
 
   const r = await post(path, payload);
@@ -2135,6 +2142,7 @@ function switchAuthMode() {
     : '密码经 scrypt 加盐哈希存储，勾选「记住我」可 30 天免登录';
 
   document.getElementById('nicknameField').style.display = isReg ? '' : 'none';
+  document.getElementById('inviteField').style.display = isReg ? '' : 'none';
   document.getElementById('strengthBox').style.display = isReg ? 'flex' : 'none';
   document.getElementById('authSubmit').textContent = isReg ? '注册并进入' : '登录';
   document.getElementById('authSwitch').textContent = isReg ? '已有账号，去登录' : '注册新账号';
@@ -2262,6 +2270,11 @@ const AUTH_FORM_TEMPLATE = `
       <div class="field" id="nicknameField" style="display:none;margin-bottom:14px">
         <label>昵称<span style="color:var(--text-3);font-weight:400">（可选，默认与用户名相同）</span></label>
         <input type="text" id="regNickname" placeholder="别人看到的名字" maxlength="20">
+      </div>
+
+      <div class="field" id="inviteField" style="display:none;margin-bottom:14px">
+        <label>邀请码<span style="color:var(--text-3);font-weight:400">（管理员开启后必填）</span></label>
+        <input type="text" id="regInvite" placeholder="向管理员索取" maxlength="32">
       </div>
 
       <div class="auth-strength" id="strengthBox" style="display:none">
@@ -2833,13 +2846,9 @@ async function onImagePick(input) {
   const fd = new FormData();
   fd.append('image', file);
 
-  let r;
-  try {
-    const res = await fetch(API + '/api/upload', { method: 'POST', body: fd });
-    r = await res.json();
-  } catch (e) {
-    r = { success: false, error: '上传失败，请确认后端服务正在运行' };
-  }
+  // 走 api()：自动带 Authorization，且不会给 FormData 误设 Content-Type
+  // （曾因这里用裸 fetch 漏带令牌，导致上传图片时报"登录已失效"）
+  let r = await api('/api/upload', { method: 'POST', body: fd });
 
   zone.style.opacity = '';
   zone.style.pointerEvents = '';

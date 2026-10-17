@@ -22,10 +22,13 @@
 import json
 import os
 import sys
+import time
+import hmac
 import socket
 import hashlib
 import threading
 import re
+from collections import deque
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -55,6 +58,79 @@ SOLC_VERSION = "0.8.19"
 DATA_DIR = Path(os.environ.get("MARKET_DATA_DIR") or (ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = DATA_DIR / "app_state.json"
+
+# ============================================================
+#  对外暴露时的安全开关（局域网/公网部署才需要）
+# ============================================================
+# 为什么要有这一层：
+#   本机开发时一切从 127.0.0.1 来，方便；一旦通过 Cloudflare Tunnel /
+#   反向代理暴露出去，**所有外部请求在服务看来都来自 127.0.0.1**
+#   （cloudflared 是本地进程，转发的连接源地址就是环回地址）。
+#   如果只看 remote_addr，就等于把外网当成本机，重置接口会裸奔。
+#   所以必须先看代理头：只要带了转发头，就一律视为"外部请求"。
+
+ADMIN_KEY = (os.environ.get("ADMIN_KEY") or "").strip()
+INVITE_CODE = (os.environ.get("INVITE_CODE") or "").strip()
+
+# 出现任意一个，就说明请求不是"直连本机"，而是经过了代理/隧道
+PROXY_HEADERS = (
+    "CF-Connecting-IP", "CF-Ray", "X-Forwarded-For", "X-Real-IP", "Forwarded",
+)
+
+# 限流：滑动窗口，按「客户端 IP + 动作」计数
+RATE_LIMITS = {
+    "register": (30, 60),   # 30 次 / 分钟
+    "login":    (60, 60),   # 60 次 / 分钟（整班同时登录也能过）
+}
+_rate_lock = threading.Lock()
+_rate_buckets = {}
+
+
+def client_ip():
+    """取真实客户端 IP。经过隧道时用 Cloudflare 提供的头，否则用连接地址。"""
+    for h in ("CF-Connecting-IP", "X-Real-IP"):
+        v = request.headers.get(h)
+        if v:
+            return v.strip()
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def is_local_direct():
+    """
+    是否"就在本机、且没经过任何代理"。
+
+    只有这种请求才享受免密钥/免限流/免邀请码的待遇 —— 它等价于
+    "操作者已经坐在这台电脑前"，本来就能改 data/ 目录，谈不上越权。
+    自动化测试全部走 127.0.0.1 直连，所以不受下面这些限制影响。
+    """
+    for h in PROXY_HEADERS:
+        if request.headers.get(h):
+            return False
+    return (request.remote_addr or "") in ("127.0.0.1", "::1")
+
+
+def rate_limited(scope: str):
+    """返回需要等待的秒数；未被限流返回 None。本机直连不限。"""
+    if is_local_direct():
+        return None
+    limit, window = RATE_LIMITS.get(scope, (60, 60))
+    key = f"{scope}:{client_ip() or 'unknown'}"
+    now = time.time()
+    with _rate_lock:
+        # 桶太多时整体清一次，避免被大量伪造 IP 撑爆内存
+        if len(_rate_buckets) > 10000:
+            _rate_buckets.clear()
+        q = _rate_buckets.setdefault(key, deque())
+        while q and now - q[0] > window:
+            q.popleft()
+        if len(q) >= limit:
+            return max(1, int(window - (now - q[0])) + 1)
+        q.append(now)
+    return None
+
 
 # ============================================================
 #  中文错误映射
@@ -710,11 +786,32 @@ def api_reset():
     传 {"wipe_credentials": true} 会连账号一起清空，
     让注册过的用户名重新可用（自动化测试脚本用）。
 
-    注意：这是破坏性操作，演示环境保留开放以便随时重置；
-    生产环境必须加管理员鉴权（require_auth + 角色校验）。
+    权限：本机直连（127.0.0.1）免密钥；其他来源必须带请求头
+    X-Admin-Key，且与服务端的 ADMIN_KEY 环境变量一致。
+    未配置 ADMIN_KEY 时，非本机请求一律拒绝。
     """
     data = request.get_json(silent=True) or {}
     wipe = bool(data.get("wipe_credentials"))
+
+    # ---- 权限校验 ----
+    # 本机直连免密钥（自己人 + 自动化测试）；
+    # 其余来源（局域网同学、隧道/公网）必须带正确的 X-Admin-Key。
+    # 没配 ADMIN_KEY 时对外一律拒绝（fail closed），不给"忘了配就等于没有"的机会。
+    if not is_local_direct():
+        provided = (request.headers.get("X-Admin-Key") or "").strip()
+        if not ADMIN_KEY:
+            return jsonify({
+                "success": False,
+                "error": "重置功能已关闭（服务端未配置 ADMIN_KEY）",
+                "code": "RESET_DISABLED",
+            }), 403
+        if not hmac.compare_digest(provided, ADMIN_KEY):
+            return jsonify({
+                "success": False,
+                "error": "无权重置：管理员密钥缺失或不正确",
+                "code": "FORBIDDEN",
+            }), 403
+
     state.reset(wipe_credentials=wipe)
     msg = "链已重置，请重新登录" if not wipe else "链已重置，账号密码已清空"
     return jsonify({"success": True, "message": msg, "contract_address": state.contract_address})
@@ -749,6 +846,27 @@ def api_register():
       - 注册成功后直接签发 token（免去二次登录）
     """
     data = request.get_json() or {}
+
+    # ---- 限流：防止有人脚本刷注册，把 199 个账户占满 ----
+    wait = rate_limited("register")
+    if wait is not None:
+        return jsonify({
+            "success": False,
+            "error": f"注册太频繁，请 {wait} 秒后再试",
+            "code": "RATE_LIMITED",
+            "retry_after": wait,
+        }), 429
+
+    # ---- 邀请码：配置了 INVITE_CODE 才启用（本机直连不需要） ----
+    if INVITE_CODE and not is_local_direct():
+        provided = (data.get("invite_code") or "").strip()
+        if not hmac.compare_digest(provided, INVITE_CODE):
+            return jsonify({
+                "success": False,
+                "error": "邀请码不正确",
+                "code": "BAD_INVITE",
+            }), 403
+
     username = (data.get("username") or "").strip()
     nickname = (data.get("nickname") or "").strip() or username
     password = data.get("password") or ""
@@ -833,6 +951,17 @@ def api_login():
       - 校验通过才签发 token
     """
     data = request.get_json() or {}
+
+    # ---- 按 IP 限流：账号级锁定只能防单账号爆破，防不了"换着用户名试" ----
+    wait = rate_limited("login")
+    if wait is not None:
+        return jsonify({
+            "success": False,
+            "error": f"请求过于频繁，请 {wait} 秒后再试",
+            "code": "RATE_LIMITED",
+            "retry_after": wait,
+        }), 429
+
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     # 「记住我」：签发一个 30 天的长令牌，关掉浏览器第二天打开仍然是登录状态
@@ -1164,11 +1293,14 @@ def uploaded_file(filename):
 
 
 @app.route("/api/upload", methods=["POST"])
+@require_auth
 def api_upload():
     """
     单独上传图片（上架前预览用）。
     返回内容哈希 —— 这就是"内容寻址"：地址由内容决定。
     真正的 IPFS 也是这个原理，只是它还会把文件分发到全球节点。
+
+    需要登录：否则任何人都能往服务器磁盘灌文件（5MB/张、张数不限）。
     """
     if "image" not in request.files:
         return jsonify({"success": False, "error": "没有收到图片文件"}), 400
@@ -1793,6 +1925,11 @@ def print_banner(port: int):
     print(f"  已注册    {len(state.credentials)} 位")
     print(f"  区块高度  {state.w3.eth.block_number}")
     print(f"  数据目录  {DATA_DIR}")
+    print()
+    print("  安全开关：")
+    print(f"    重置接口  {'已启用（需 X-Admin-Key）' if ADMIN_KEY else '仅限本机（对外已关闭）'}")
+    print(f"    邀请码    {'已启用' if INVITE_CODE else '未启用（任何人可注册）'}")
+    print(f"    访问限流  登录 {RATE_LIMITS['login'][0]}/分，注册 {RATE_LIMITS['register'][0]}/分（按 IP）")
     print()
     print("  本机访问：")
     print(f"    http://127.0.0.1:{port}")
