@@ -237,6 +237,24 @@ r = requests.get(f"{BASE}/api/timeline/99999")
 check("不存在的商品 → 404", r.status_code == 404)
 
 # ---------------------------------------------------------------
+print("\n【功能2.1】已售出商品不再出现在公开列表")
+# ---------------------------------------------------------------
+# 成交后商品不该继续挂在市场页上（否则满屏都是卖掉的东西），
+# 但管理后台必须还能看到，方便追溯和审核。
+pub = requests.get(f"{BASE}/api/items", params={"q": "内容寻址测试商品"}, timeout=10).json()
+check("公开列表已看不到已售商品", pub.get("total") == 0, f"total={pub.get('total')}")
+
+detail = requests.get(f"{BASE}/api/items/{item_id}", timeout=10)
+check("详情接口仍可访问（我的交易需要看时间线）", detail.status_code == 200,
+      f"HTTP {detail.status_code}")
+
+adm = requests.get(f"{BASE}/api/admin/items", timeout=10).json()
+sold = [x for x in (adm.get("items") or []) if x.get("item_id") == item_id]
+check("管理后台仍能看到该商品", bool(sold), str(adm)[:150])
+check("后台状态为已成交(2)", bool(sold) and sold[0].get("status") == 2,
+      str(sold[:1]))
+
+# ---------------------------------------------------------------
 print("\n【功能3】数据看板")
 # ---------------------------------------------------------------
 r = requests.get(f"{BASE}/api/dashboard")

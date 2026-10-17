@@ -189,6 +189,11 @@ def friendly_error(e: Exception) -> str:
 # 读取时解析出来。这是"在不改协议的前提下扩展字段"的常见技巧。
 
 CATEGORIES = ["数码电子", "图书教材", "生活用品", "运动户外", "服饰鞋包", "其他"]
+
+# 公开商品列表只展示这两种状态。
+# 已售出(2) / 已下架(3) 属于"历史记录"，只在管理后台出现 ——
+# 否则市场页会被一堆成交记录淹没，也没人想买已经卖掉的东西。
+PUBLIC_ITEM_STATUSES = (0, 1)
 CATEGORY_PREFIX = "[分类]"
 
 # 每个链上账户的初始余额，直接写进创世状态。
@@ -260,7 +265,7 @@ def guess_category(text: str) -> str:
 #   3. 原理与 IPFS 一致，只是不做分布式网络那部分
 
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-MAX_IMAGE_SIZE = 5 * 1024 * 1024   # 5MB
+MAX_IMAGE_SIZE = 50 * 1024 * 1024   # 50MB
 
 
 def save_image(file_storage):
@@ -278,7 +283,7 @@ def save_image(file_storage):
     if not data:
         return None, None, "图片文件为空"
     if len(data) > MAX_IMAGE_SIZE:
-        return None, None, f"图片过大（{len(data)/1024/1024:.1f}MB），请压缩到 5MB 以内"
+        return None, None, f"图片过大（{len(data)/1024/1024:.1f}MB），请压缩到 50MB 以内"
 
     # 内容寻址：哈希由文件内容算出
     digest = hashlib.sha256(data).hexdigest()
@@ -1108,6 +1113,7 @@ def api_items():
     count = state.market.functions.getItemCount().call()
     status_names = {0: "在售", 1: "交易中", 2: "已售出", 3: "已下架"}
     all_items = []
+    public_total = 0
     # 分类统计
     category_counts = {c: 0 for c in CATEGORIES}
 
@@ -1119,7 +1125,6 @@ def api_items():
         seller_name = nick or seller_addr[:10] + "..."
 
         cat, img_hash, pure_desc = decode_description(raw[2])
-        category_counts[cat] = category_counts.get(cat, 0) + 1
 
         # 买家昵称
         buyer_name = ""
@@ -1148,6 +1153,12 @@ def api_items():
             "created_text": relative_time(raw[7]),
             "created_full": full_time(raw[7]),
         }
+
+        # ---- 公开可见性：已售出/已下架只在管理后台出现 ----
+        if item["status"] not in PUBLIC_ITEM_STATUSES:
+            continue
+        public_total += 1
+        category_counts[cat] = category_counts.get(cat, 0) + 1
 
         # ---- 筛选 ----
         if q:
@@ -1184,7 +1195,7 @@ def api_items():
 
     # ---- 全局统计 ----
     stats = {
-        "total": count,
+        "total": public_total,
         "onsale": sum(1 for x in all_items if x["status"] == 0) if not q and not category else None,
         "categories": category_counts,
     }
@@ -1200,7 +1211,7 @@ def api_items():
         "success": True,
         "items": page_items,
         "total": total_filtered,
-        "all_total": count,
+        "all_total": public_total,
         "page": page,
         "page_size": page_size,
         "total_pages": max(1, (total_filtered + page_size - 1) // page_size),
@@ -1301,7 +1312,7 @@ def api_upload():
     返回内容哈希 —— 这就是"内容寻址"：地址由内容决定。
     真正的 IPFS 也是这个原理，只是它还会把文件分发到全球节点。
 
-    需要登录：否则任何人都能往服务器磁盘灌文件（5MB/张、张数不限）。
+    需要登录：否则任何人都能往服务器磁盘灌文件（50MB/张、张数不限）。
     """
     if "image" not in request.files:
         return jsonify({"success": False, "error": "没有收到图片文件"}), 400

@@ -1667,7 +1667,7 @@
         <button class="chip active" data-status="" onclick="setStatus('', this)">全部</button>
         <button class="chip" data-status="0" onclick="setStatus('0', this)">在售中</button>
         <button class="chip" data-status="1" onclick="setStatus('1', this)">交易中</button>
-        <button class="chip" data-status="2" onclick="setStatus('2', this)">已售出</button>
+        <!-- 「已售出」不在这里：售出/下架的商品不再公开，只留在管理后台 -->
       </div>
     </div>
 
@@ -1712,7 +1712,7 @@
             <div class="upload-empty" id="uploadEmpty">
               <div class="upload-icon">🖼</div>
               <div class="upload-title">点击选择图片</div>
-              <div class="upload-hint">jpg / png / gif / webp，最大 5MB<br>
+              <div class="upload-hint">jpg / png / gif / webp，最大 50MB<br>
                 <span style="color:var(--purple)">上传后按内容哈希（SHA-256）寻址存储</span>
               </div>
             </div>
@@ -3018,8 +3018,8 @@ async function onImagePick(input) {
   const file = input.files && input.files[0];
   if (!file) return;
 
-  if (file.size > 5 * 1024 * 1024) {
-    toast('图片超过 5MB，请压缩后再上传', 'error');
+  if (file.size > 50 * 1024 * 1024) {
+    toast('图片超过 50MB，请压缩后再上传', 'error');
     input.value = '';
     return;
   }
