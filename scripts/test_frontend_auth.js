@@ -170,8 +170,43 @@ setTimeout(() => {
         String(window.localStorage.getItem('ly_user')));
   window.eval('localStorage.removeItem("ly_token"); setRememberedUser("")');
 
-  // ---- 9. 运行期没有未捕获异常 ----
-  console.log('\n【9】页面脚本运行期无未捕获异常');
+  // ---- 10. 手机端底部导航 ----
+  // 用户反馈"手机端找不到上架商品的入口"。根因是 ≤620px 时写了
+  // `nav { display: none }`，把顶部导航整个隐藏了，又没有替代入口。
+  // 这里同时校验 DOM 和 CSS，防止再写回那种写法。
+  console.log('\n【10】手机端底部导航（上架入口可达性）');
+  const mobileNav = doc.getElementById('mobileNav');
+  check('存在手机端导航 #mobileNav', !!mobileNav);
+
+  const mBtns = mobileNav ? [...mobileNav.querySelectorAll('button')] : [];
+  check('底部导航有 5 个入口', mBtns.length === 5, String(mBtns.length));
+
+  const mViews = mBtns.map(b => b.dataset.view);
+  check('包含 publish（上架）入口', mViews.includes('publish'), mViews.join(','));
+  check('market/orders/board/chain 都在',
+        ['market', 'orders', 'board', 'chain'].every(v => mViews.includes(v)),
+        mViews.join(','));
+
+  check('没有把整个 nav 隐藏（曾经的 bug）',
+        !/\bnav\s*\{\s*display:\s*none/.test(html));
+  check('620px 断点隐藏的是 #mainNav',
+        html.includes('#mainNav { display: none; }'));
+
+  const mnBlocks = [...html.matchAll(/#mobileNav\s*\{([^}]*)\}/g)].map(m => m[1]);
+  check('底部导航使用 fixed 定位', mnBlocks.some(b => /position:\s*fixed/.test(b)),
+        mnBlocks.join(' | ').slice(0, 120));
+
+  // 切视图时两套导航要同步高亮
+  window.eval("switchView('publish')");
+  check('切换后底部导航「上架」高亮',
+        doc.querySelector('#mobileNav button[data-view="publish"]').classList.contains('active'));
+  check('顶部导航「发布商品」同步高亮',
+        doc.querySelector('#mainNav button[data-view="publish"]').classList.contains('active'));
+  check('发布视图已激活',
+        doc.getElementById('view-publish').classList.contains('active'));
+
+  // ---- 11. 运行期没有未捕获异常 ----
+  console.log('\n【11】页面脚本运行期无未捕获异常');
   const errs = window.__errs.filter(e => !/Not implemented|Could not parse CSS/.test(e));
   check('无未捕获 JS 异常', errs.length === 0, errs.join(' | '));
 

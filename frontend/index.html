@@ -145,6 +145,9 @@
     box-shadow: 0 1px 2px rgba(29,93,184,.10);
   }
 
+  /* 手机端底部导航：桌面端不显示（ID 选择器优先级高于上面的 nav） */
+  #mobileNav { display: none; }
+
   .chain-status {
     margin-left: auto;
     display: flex; align-items: center; gap: 16px;
@@ -1377,7 +1380,41 @@
     .metrics-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   }
   @media (max-width: 620px) {
-    nav { display: none; }
+    /* 顶栏内联导航隐藏，改用底部固定导航。
+       注意这里必须写 #mainNav：如果只写 nav，会把下面那个
+       #mobileNav 也一起隐藏掉 —— 手机上就彻底没有入口了。 */
+    #mainNav { display: none; }
+
+    /* ---- 手机端底部导航 ---- */
+    #mobileNav {
+      display: flex;
+      position: fixed; left: 0; right: 0; bottom: 0;
+      z-index: 300;
+      background: #fff;
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -2px 12px rgba(16, 24, 40, .07);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    #mobileNav button {
+      flex: 1 1 0; min-width: 0;
+      background: none; border: none; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      padding: 8px 2px 7px;
+      font-family: inherit; font-size: 10.5px; font-weight: 500;
+      color: var(--text-3);
+      transition: color .15s ease;
+    }
+    #mobileNav button .mn-ico {
+      font-size: 17px; line-height: 1;
+      filter: grayscale(.35); opacity: .85;
+      transition: all .15s ease;
+    }
+    #mobileNav button.active { color: var(--primary); font-weight: 700; }
+    #mobileNav button.active .mn-ico { filter: none; opacity: 1; transform: translateY(-1px); }
+
+    /* 给底部导航让出空间，否则最后一个卡片会被遮住 */
+    body { padding-bottom: 62px; }
+
     .items-grid { grid-template-columns: 1fr; }
     .search-row { flex-direction: column; }
     .modal { padding: 20px; }
@@ -1416,6 +1453,29 @@
     </div>
   </div>
 </header>
+
+<!-- ================= 手机端底部导航 =================
+     桌面端隐藏（≤620px 才显示）。
+     为什么是独立的一个 nav：header 用了 backdrop-filter，
+     它会让 header 内部 position:fixed 的子元素失效（变成相对 header 定位），
+     所以底部导航必须放在 header 外面。 -->
+<nav id="mobileNav">
+  <button class="active" data-view="market"  onclick="switchView('market', this)">
+    <span class="mn-ico">🛒</span><span>市场</span>
+  </button>
+  <button data-view="publish" onclick="switchView('publish', this)">
+    <span class="mn-ico">➕</span><span>上架</span>
+  </button>
+  <button data-view="orders"  onclick="switchView('orders', this)">
+    <span class="mn-ico">📦</span><span>交易</span>
+  </button>
+  <button data-view="board"   onclick="switchView('board', this)">
+    <span class="mn-ico">📊</span><span>看板</span>
+  </button>
+  <button data-view="chain"   onclick="switchView('chain', this)">
+    <span class="mn-ico">⛓️</span><span>链上</span>
+  </button>
+</nav>
 
 <main>
 
@@ -2011,12 +2071,11 @@ function switchView(name, btn) {
   const view = document.getElementById('view-' + name);
   if (view) view.classList.add('active');
 
-  document.querySelectorAll('#mainNav button').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  else {
-    const b = document.querySelector(`#mainNav button[data-view="${name}"]`);
-    if (b) b.classList.add('active');
-  }
+  // 顶部导航与手机底部导航保持同步：按 data-view 对齐，
+  // 不依赖"用户点的是哪一个"（手机上点的是底部栏，桌面点的是顶栏）
+  document.querySelectorAll('#mainNav button, #mobileNav button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === name);
+  });
 
   if (name === 'market')  loadItems();
   if (name === 'orders')  loadMyOrders();
