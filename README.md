@@ -191,6 +191,15 @@ python scripts/backup_data.py --with-uploads --keep 10
 
 隧道窗口关掉，公网链接就失效（本地服务不受影响）。
 
+> **地址变了怎么办**：`docs/同学使用说明.png` 里印着地址，换隧道后必须重新生成，
+> 否则转发出去的图点开是超时。一条命令搞定：
+>
+> ```bash
+> python scripts/make_share_image.py https://新的地址.trycloudflare.com
+> ```
+>
+> 它会改写说明卡里的地址并重新导出 PNG（750 宽，直接发群）。
+
 ### 几个必须知道的点
 
 - **地址每次重启都会变**。免费快速隧道没有固定域名。要固定地址得有自己的域名
