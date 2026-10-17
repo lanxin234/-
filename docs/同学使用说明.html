@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>链易 · 校园二手交易 使用说明</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 375px;
+    background: #eef2f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #1a2233;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { padding: 22px 16px 26px; }
+
+  /* ---------- 头部 ---------- */
+  .hero { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .logo {
+    width: 46px; height: 46px; border-radius: 14px; flex: none;
+    background: linear-gradient(145deg, #2a6fd4, #14428c);
+    color: #fff; font-size: 22px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 14px rgba(29, 93, 184, .28);
+  }
+  .hero h1 { font-size: 20px; letter-spacing: .5px; }
+  .hero p { font-size: 12px; color: #6b7688; margin-top: 3px; }
+
+  /* ---------- 地址卡 ---------- */
+  .addr {
+    background: linear-gradient(150deg, #1d5db8, #16417f);
+    border-radius: 16px; padding: 16px 16px 15px; color: #fff;
+    box-shadow: 0 10px 22px rgba(22, 65, 127, .22);
+    margin-bottom: 18px;
+  }
+  .addr .label {
+    font-size: 11px; letter-spacing: 2px; opacity: .75;
+    text-transform: uppercase; margin-bottom: 7px;
+  }
+  .addr .url {
+    font-size: 13px; line-height: 1.5; word-break: break-all;
+    font-family: ui-monospace, Consolas, monospace;
+  }
+  .addr .code-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,.18);
+  }
+  .addr .code-label { font-size: 12px; opacity: .8; }
+  .addr .code {
+    font-size: 17px; font-weight: 700; letter-spacing: 1.5px;
+    font-family: ui-monospace, Consolas, monospace;
+    background: rgba(255,255,255,.16); padding: 4px 10px; border-radius: 8px;
+  }
+
+  /* ---------- 区块标题 ---------- */
+  .sec-title {
+    font-size: 13px; font-weight: 700; color: #1d5db8;
+    margin: 0 0 10px 2px; display: flex; align-items: center; gap: 6px;
+  }
+  .sec-title::before {
+    content: ""; width: 3px; height: 13px; border-radius: 2px;
+    background: #1d5db8;
+  }
+
+  /* ---------- 步骤 ---------- */
+  .steps { margin-bottom: 18px; }
+  .step {
+    display: flex; gap: 11px; background: #fff; border-radius: 12px;
+    padding: 12px 13px; margin-bottom: 8px;
+    box-shadow: 0 2px 8px rgba(26, 34, 51, .05);
+  }
+  .num {
+    width: 22px; height: 22px; border-radius: 50%; flex: none;
+    background: #e8f0fd; color: #1d5db8; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 1px;
+  }
+  .step h3 { font-size: 13.5px; margin-bottom: 3px; }
+  .step p { font-size: 11.5px; line-height: 1.55; color: #6b7688; }
+  .step b { color: #1a2233; font-weight: 600; }
+
+  /* ---------- 规则 ---------- */
+  .rules {
+    background: #fff; border-radius: 12px; padding: 13px;
+    margin-bottom: 18px; box-shadow: 0 2px 8px rgba(26, 34, 51, .05);
+  }
+  .rule { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.6; margin-bottom: 7px; }
+  .rule:last-child { margin-bottom: 0; }
+  .rule span:first-child { color: #8a94a6; flex: none; width: 46px; }
+  .rule span:last-child { color: #1a2233; }
+
+  /* ---------- 提醒 ---------- */
+  .notice {
+    background: #fff8e8; border: 1px solid #f2dfb4; border-radius: 12px;
+    padding: 13px; margin-bottom: 16px;
+  }
+  .notice-item { display: flex; gap: 7px; font-size: 11.5px; line-height: 1.6; color: #6b5a2e; margin-bottom: 6px; }
+  .notice-item:last-child { margin-bottom: 0; }
+  .notice-item b { color: #8a5a00; }
+
+  .footer { text-align: center; font-size: 11px; color: #9aa4b4; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <div class="logo">链</div>
+    <div>
+      <h1>链易 · 校园二手</h1>
+      <p>区块链担保交易 · 钱先进托管，确认收货才放款</p>
+    </div>
+  </div>
+
+  <div class="addr">
+    <div class="label">访问地址</div>
+    <div class="url">https://pixels-bench-concepts-learners<br>.trycloudflare.com</div>
+    <div class="code-row">
+      <span class="code-label">注册邀请码</span>
+      <span class="code">lianyi2026</span>
+    </div>
+  </div>
+
+  <div class="sec-title">怎么用 · 五步</div>
+  <div class="steps">
+    <div class="step">
+      <div class="num">1</div>
+      <div>
+        <h3>注册</h3>
+        <p>填用户名、密码、邀请码 <b>lianyi2026</b>。勾「记住我」可 30 天免登录。</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <div>
+        <h3>发布商品</h3>
+        <p>写名称、标价格、选分类，可传一张图（≤5MB）。价格单位是<b>模拟币</b>。</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <div>
+        <h3>下单购买</h3>
+        <p>点「立即购买」，钱从你的余额扣除，<b>先进合约托管</b>，卖家当场拿不到。</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">4</div>
+      <div>
+        <h3>确认收货</h3>
+        <p>拿到东西后由<b>买家</b>点「确认收货」，货款才放给卖家，平台扣 1% 手续费。</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">5</div>
+      <div>
+        <h3>互相评价</h3>
+        <p>交易完成后双方各评一次（1–5 星），评价会记在链上，长期可查。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title">规则速查</div>
+  <div class="rules">
+    <div class="rule"><span>用户名</span><span>中文/字母/数字/下划线，1–12 位，注册后不可改</span></div>
+    <div class="rule"><span>密码</span><span>6–64 位，不能全数字，不能用 123456 这类弱密码</span></div>
+    <div class="rule"><span>价格</span><span>必须大于 0，单位是模拟 ETH（100 起始余额）</span></div>
+    <div class="rule"><span>图片</span><span>jpg / png / gif / webp，单张 ≤5MB，可不传</span></div>
+    <div class="rule"><span>分类</span><span>数码电子、图书教材、生活用品、运动户外、服饰鞋包、其他</span></div>
+  </div>
+
+  <div class="notice">
+    <div class="notice-item"><b>①</b><span>这里的钱是<b>模拟币，不是真钱</b>。实际付款还是线下微信/支付宝，平台只做登记和信用记录。</span></div>
+    <div class="notice-item"><b>②</b><span>不点「确认收货」，钱一直锁在合约里，<b>卖家收不到</b>——这是保护买家的机制，收货后请及时确认。</span></div>
+    <div class="notice-item"><b>③</b><span>链接若打不开，多半是服务重启了，<b>以群里最新地址为准</b>。</span></div>
+  </div>
+
+  <div class="footer">
+    校园内部试用 · 仅限本群同学<br>
+    有问题直接在群里问
+  </div>
+
+</div>
+</body>
+</html>
